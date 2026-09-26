@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "DaakFlow — Adaptive Delivery Routing",
   description:
-    "Live, self-adjusting delivery route optimizer that re-plans around real-world events.",
+    "Live, self-adjusting delivery route optimizer that re-plans around real-world events",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
