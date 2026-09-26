@@ -34,7 +34,7 @@ export default function Topbar() {
         </span>
         <div className="leading-tight">
           <div className="text-sm font-semibold tracking-tight text-slate-100">
-            FleetView
+            DaakFlow
           </div>
           <div className="text-[10px] uppercase tracking-widest text-slate-500">
             Adaptive Routing

@@ -10,6 +10,16 @@ import { fmtTime } from "../lib/geo";
 
 const CENTER: [number, number] = [12.9716, 77.5946];
 
+// CARTO's basemap CDN now requires an API key and watermarks anonymous tiles,
+// so we default to Esri's keyless dark-gray basemap. To use your own provider
+// (e.g. a keyed CARTO or MapTiler URL) set NEXT_PUBLIC_MAP_TILE_URL in
+// frontend/.env.local — no code change needed.
+const TILE_URL =
+  process.env.NEXT_PUBLIC_MAP_TILE_URL ??
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+const TILE_ATTRIBUTION =
+  process.env.NEXT_PUBLIC_MAP_TILE_ATTRIBUTION ?? "&copy; Esri";
+
 function depotIcon() {
   return L.divIcon({
     className: "",
@@ -61,10 +71,7 @@ export default function MapView() {
       className="h-full w-full"
       zoomControl={true}
     >
-      <TileLayer
-        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        attribution='&copy; OpenStreetMap &copy; CARTO'
-      />
+      <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
 
       {vehicles.map((v) => {
         const stops = (plan[v.id] || [])
