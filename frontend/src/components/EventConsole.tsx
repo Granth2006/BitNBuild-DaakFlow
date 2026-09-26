@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { useWorldStore } from "../store/useWorldStore";
 import { fmtTime } from "../lib/geo";
-import { Package, AlertTriangle, Wrench, Cone, Ban, Clock, MapPin } from "./icons";
+import { Package, AlertTriangle, Wrench, Cone, Ban, Clock, MapPin, ArrowRight } from "./icons";
 import type { EventType } from "../lib/types";
 
 const EVENTS: { type: EventType; label: string; Icon: typeof Package; desc: string; accent: string }[] = [
@@ -29,11 +29,24 @@ export default function EventConsole() {
   const fireEvent = useWorldStore((s) => s.fireEvent);
   const events = useWorldStore((s) => s.events);
   const metrics = useWorldStore((s) => s.metrics);
+  const vehicles = useWorldStore((s) => s.vehicles);
+  const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
+  const setFocus = useWorldStore((s) => s.setFocus);
+
+  const vName: Record<string, string> = {};
+  for (const v of vehicles) vName[v.id] = v.name;
 
   const chartData = events
     .slice(0, 10)
     .reverse()
     .map((e) => ({ name: fmtTime(e.simTime), ms: e.reoptMs }));
+
+  // Flatten recent events' reassignment diffs into a live "from → to" feed.
+  const feed = events
+    .flatMap((e) =>
+      e.reassignments.map((r) => ({ ...r, key: `${e.id}-${r.orderId}`, simTime: e.simTime })),
+    )
+    .slice(0, 8);
 
   return (
     <div className="panel-scroll flex h-full flex-col gap-3 overflow-y-auto p-3">
@@ -41,6 +54,23 @@ export default function EventConsole() {
         Inject a live disruption. Each one triggers an <span className="text-brand">incremental re-optimization</span> —
         completed & in-progress stops stay frozen; only the unvisited tail re-routes.
       </p>
+
+      <label className="flex items-center gap-2 rounded-lg border border-line bg-surface2/60 px-3 py-2">
+        <span className="text-[10px] uppercase tracking-wider text-faint">Focus driver</span>
+        <select
+          value={focusVehicleId ?? ""}
+          onChange={(e) => setFocus(e.target.value || null)}
+          aria-label="Focus a driver's route on the map"
+          className="ml-auto rounded-md border border-line bg-surface3 px-2 py-1 text-[12px] font-medium text-ink outline-none focus:border-line2"
+        >
+          <option value="">All drivers</option>
+          {vehicles.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.driver} · {v.name}
+            </option>
+          ))}
+        </select>
+      </label>
 
       <div className="grid grid-cols-2 gap-2">
         {EVENTS.map((e) => (
@@ -102,6 +132,34 @@ export default function EventConsole() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="mb-1 text-[10px] uppercase tracking-wider text-faint">Order reassignments</div>
+        {feed.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-line py-4 text-center text-[11px] text-faint">
+            Reassignments from each re-optimization appear here
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {feed.map((r) => (
+              <div
+                key={r.key}
+                className="flex items-center gap-2 rounded-md border border-line bg-surface2/40 px-2.5 py-1.5 text-[11px]"
+              >
+                <span className="font-mono text-[10px] text-faint">{fmtTime(r.simTime)}</span>
+                <span className="font-mono font-semibold text-ink">{r.label}</span>
+                <span className="ml-auto flex items-center gap-1.5">
+                  <span className="text-muted">{r.from ? vName[r.from] ?? r.from : "Unassigned"}</span>
+                  <ArrowRight width={12} height={12} className="text-faint" />
+                  <span className={r.to ? "text-muted" : "text-rose-400"}>
+                    {r.to ? vName[r.to] ?? r.to : "Dropped"}
+                  </span>
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>

@@ -19,6 +19,8 @@ export default function MapOverlay() {
   const orders = useWorldStore((s) => s.orders);
   const vehicles = useWorldStore((s) => s.vehicles);
   const metrics = useWorldStore((s) => s.metrics);
+  const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
+  const setFocus = useWorldStore((s) => s.setFocus);
 
   const active = vehicles.filter((v) => v.status === "ACTIVE" && v.driverAvailable).length;
   const live = orders.filter(
@@ -27,6 +29,26 @@ export default function MapOverlay() {
 
   return (
     <>
+      {/* driver picker — top left, clear of the Leaflet zoom control */}
+      <div className="pointer-events-auto absolute left-14 top-3 z-[1000]">
+        <label className="flex items-center gap-2 rounded-lg border border-black/10 bg-white/85 px-2.5 py-1.5 shadow-lg backdrop-blur">
+          <span className="text-[9px] font-semibold uppercase tracking-wider text-slate-500">Driver</span>
+          <select
+            value={focusVehicleId ?? ""}
+            onChange={(e) => setFocus(e.target.value || null)}
+            aria-label="Focus a driver's route on the map"
+            className="bg-transparent text-[12px] font-medium text-slate-700 outline-none"
+          >
+            <option value="">All drivers</option>
+            {vehicles.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.driver} · {v.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
       {/* KPI chips — top right (keeps Leaflet zoom clear top-left) */}
       <div className="pointer-events-none absolute right-3 top-3 z-[1000] flex gap-2">
         <Chip label="Active" value={`${active}`} />

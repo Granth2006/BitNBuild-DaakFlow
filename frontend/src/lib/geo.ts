@@ -49,3 +49,11 @@ export function fmtTime(min: number): string {
   const mm = m % 60;
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
+
+// Parse "HH:MM" into minutes-from-midnight (inverse of fmtTime).
+export function parseTime(hhmm: string): number {
+  const [h, m] = hhmm.split(":");
+  const hh = parseInt(h, 10);
+  const mm = parseInt(m, 10);
+  return (Number.isNaN(hh) ? 0 : hh) * 60 + (Number.isNaN(mm) ? 0 : mm);
+}
