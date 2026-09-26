@@ -103,7 +103,6 @@ function insertionDistance(
   const next = om[nextId].location;
   return roadKm(prev, o.location) + roadKm(o.location, next) - roadKm(prev, next);
 }
-// __APPEND__
 
 /**
  * Assign orders to vehicles and sequence each route.
@@ -146,6 +145,202 @@ export function optimize(input: OptimizeInput): OptimizeResult {
       st.load += o.weight;
     }
   }
-// __APPEND__
+  // 2) Everything else (PENDING / previously ASSIGNED) is free to reassign.
+  const pool = assignable.filter(
+    (o) =>
+      !(
+        o.status === "IN_PROGRESS" &&
+        o.assignedVehicle &&
+        states[o.assignedVehicle]
+      ),
+  );
+  pool.sort(
+    (a, b) =>
+      b.priority - a.priority ||
+      a.windowEnd - b.windowEnd ||
+      a.createdAt - b.createdAt,
+  );
+
+  const assignments: Record<string, OrderAssignment> = {};
+  for (const o of orders) {
+    if (
+      o.status === "COMPLETED" ||
+      o.status === "CANCELLED" ||
+      o.status === "DROPPED"
+    ) {
+      assignments[o.id] = {
+        vehicle: o.assignedVehicle,
+        seq: o.seqIndex,
+        eta: o.eta,
+        status: o.status,
+      };
+    }
+  }
+
+  // 3) Greedy cheapest-insertion, preferring window-feasible placements.
+  for (const o of pool) {
+    let best: { vid: string; pos: number; cost: number; feasible: boolean } | null =
+      null;
+    for (const vid of Object.keys(states)) {
+      const st = states[vid];
+      if (st.load + o.weight > st.v.capacityWeight) continue; // capacity limit
+      const startTime = Math.max(simTime, st.v.shiftStart);
+      for (let pos = st.lockedCount; pos <= st.stops.length; pos++) {
+        const cand = [...st.stops.slice(0, pos), o.id, ...st.stops.slice(pos)];
+        const addDist = insertionDistance(st.v.location, st.stops, pos, o, om);
+        const late = lateness(
+          st.v.location,
+          startTime,
+          cand,
+          om,
+          st.v.speedKmh,
+          trafficFactor,
+        );
+        const feasible = late === 0;
+        const cost = addDist + late * 2; // soft lateness penalty
+        if (
+          best === null ||
+          (feasible && !best.feasible) ||
+          (feasible === best.feasible && cost < best.cost)
+        ) {
+          best = { vid, pos, cost, feasible };
+        }
+      }
+    }
+    if (best) {
+      const st = states[best.vid];
+      st.stops.splice(best.pos, 0, o.id);
+      st.load += o.weight;
+    } else {
+      // Nowhere feasible (capacity exhausted) — drop the lowest-value order.
+      assignments[o.id] = { vehicle: null, seq: null, eta: null, status: "DROPPED" };
+    }
+  }
+  // 4) Materialize the plan, compute final ETAs, and record assignments.
+  const plan: Plan = {};
+  for (const vid of Object.keys(states)) {
+    const st = states[vid];
+    const startTime = Math.max(simTime, st.v.shiftStart);
+    const etas = simulateEtas(
+      st.v.location,
+      startTime,
+      st.stops,
+      om,
+      st.v.speedKmh,
+      trafficFactor,
+    );
+    const stops: RouteStop[] = st.stops.map((id, i) => ({
+      orderId: id,
+      seq: i,
+      eta: etas[id],
+      locked: i < st.lockedCount,
+    }));
+    plan[vid] = stops;
+    for (const s of stops) {
+      const o = om[s.orderId];
+      assignments[s.orderId] = {
+        vehicle: vid,
+        seq: s.seq,
+        eta: s.eta,
+        status: o.status === "IN_PROGRESS" ? "IN_PROGRESS" : "ASSIGNED",
+      };
+    }
+  }
+
+  const t1 = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const metrics = computeMetrics(
+    plan,
+    vehicles,
+    om,
+    assignments,
+    input.previousPlan,
+    t1 - t0,
+  );
+  return { plan, assignments, metrics };
+}
+
+export function computeMetrics(
+  plan: Plan,
+  vehicles: Vehicle[],
+  om: Record<string, Order>,
+  assignments: Record<string, OrderAssignment>,
+  previousPlan: Plan | undefined,
+  reoptMs: number,
+): Metrics {
+  let dist = 0;
+  let late = 0;
+  let makespan = 0;
+  const vById: Record<string, Vehicle> = {};
+  for (const v of vehicles) vById[v.id] = v;
+
+  for (const vid of Object.keys(plan)) {
+    const v = vById[vid];
+    let cur = v.location;
+    for (const s of plan[vid]) {
+      const o = om[s.orderId];
+      dist += roadKm(cur, o.location);
+      cur = o.location;
+      if (s.eta > o.windowEnd) late += 1;
+      if (s.eta > makespan) makespan = s.eta;
+    }
+  }
+
+  const active = vehicles.filter(
+    (v) => v.status === "ACTIVE" && v.driverAvailable,
+  );
+  let util = 0;
+  if (active.length) {
+    let sum = 0;
+    for (const v of active) {
+      const load = (plan[v.id] || []).reduce(
+        (a, s) => a + om[s.orderId].weight,
+        0,
+      );
+      sum += Math.min(1, load / v.capacityWeight);
+    }
+    util = (sum / active.length) * 100;
+  }
+
+  const routeChanges = previousPlan
+    ? countRouteChanges(previousPlan, plan)
+    : 0;
+  const dropped = Object.values(assignments).filter(
+    (a) => a.status === "DROPPED",
+  ).length;
+
+  return {
+    totalDistanceKm: round1(dist),
+    totalTimeMin: Math.round(makespan),
+    lateDeliveries: late,
+    routeChanges,
+    utilizationPct: Math.round(util),
+    reoptMs: Math.round(reoptMs),
+    dropped,
+  };
+}
+
+// Count stops whose (vehicle, seq) differs from the previous plan.
+function countRouteChanges(prev: Plan, next: Plan): number {
+  const prevPos: Record<string, string> = {};
+  for (const vid of Object.keys(prev)) {
+    for (const s of prev[vid]) prevPos[s.orderId] = `${vid}:${s.seq}`;
+  }
+  let changes = 0;
+  const seen = new Set<string>();
+  for (const vid of Object.keys(next)) {
+    for (const s of next[vid]) {
+      seen.add(s.orderId);
+      if (prevPos[s.orderId] !== `${vid}:${s.seq}`) changes += 1;
+    }
+  }
+  for (const id of Object.keys(prevPos)) {
+    if (!seen.has(id)) changes += 1;
+  }
+  return changes;
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
 
 
