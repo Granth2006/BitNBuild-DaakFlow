@@ -322,6 +322,26 @@ class WorldState:
             self.orders = [o for o in self.orders if o.id != oid]
             return len(self.orders) != before
 
+    # -- simulation support ------------------------------------------------- #
+    def set_vehicle_position(
+        self, vid: str, lat: float, lng: float, progress: Optional[float] = None
+    ) -> Optional[Vehicle]:
+        """Move a vehicle to its live position (and optionally set leg progress).
+
+        Used by the simulator / re-optimization flow so a vehicle re-enters the
+        model at where it actually is, not the depot. Returns the updated
+        vehicle, or ``None`` if the id is unknown.
+        """
+        with self._lock:
+            veh = next((v for v in self.vehicles if v.id == vid), None)
+            if veh is None:
+                return None
+            veh.location.lat = lat
+            veh.location.lng = lng
+            if progress is not None:
+                veh.progress = progress
+            return veh
+
 
 def _max_seq(ids) -> int:
     """Highest ``-usr-N`` suffix among ids, so generated ids never collide."""

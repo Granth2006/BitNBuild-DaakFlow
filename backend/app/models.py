@@ -249,3 +249,51 @@ class OrderUpdate(ApiModel):
     window_end: Optional[int] = None
     status: Optional[OrderStatus] = None
 
+
+# --------------------------------------------------------------------------- #
+# Phase 6 request payloads (disruptions + sim support)
+# --------------------------------------------------------------------------- #
+class EventPayload(ApiModel):
+    """Optional details for a disruption. Every field is optional: a bare event
+    (as the demo console fires) synthesises sensible, deterministic defaults;
+    callers may pin a target / body for reproducible scenarios.
+
+    * NEW_ORDER / PRIORITY_ORDER: ``lat``/``lng``/``weight``/``priority``/
+      ``window_start``/``window_end``/``address``/``label`` describe the order.
+    * BREAKDOWN: ``vehicle_id`` — which vehicle fails (else the busiest active).
+    * TRAFFIC: ``factor_delta`` — how much to raise the congestion factor.
+    * CANCELLATION / TIME_CHANGE / ADDRESS_CHANGE: ``order_id`` — the target
+      order (else the first eligible one); ADDRESS_CHANGE also reads lat/lng.
+    """
+
+    # order body (NEW_ORDER / PRIORITY_ORDER, plus lat/lng for ADDRESS_CHANGE)
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    weight: Optional[float] = None
+    priority: Optional[int] = None
+    window_start: Optional[int] = None
+    window_end: Optional[int] = None
+    address: Optional[str] = None
+    label: Optional[str] = None
+    # targets
+    vehicle_id: Optional[str] = None
+    order_id: Optional[str] = None
+    # TRAFFIC
+    factor_delta: Optional[float] = None
+
+
+class EventRequest(ApiModel):
+    """Body of ``POST /events`` — a disruption ``type`` plus optional payload."""
+
+    type: str
+    payload: EventPayload = Field(default_factory=EventPayload)
+
+
+class VehiclePosition(ApiModel):
+    """Body of ``POST /vehicles/{id}/position`` — sim support for moving a
+    vehicle to its live location (and optional leg progress)."""
+
+    lat: float
+    lng: float
+    progress: float = 0.0
+

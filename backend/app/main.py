@@ -16,16 +16,22 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .db import db
+from .events import apply_event
 from .models import (
     Depot,
+    EventRequest,
     Order,
     OrderCreate,
     OrderUpdate,
     Vehicle,
     VehicleCreate,
+    VehiclePosition,
     VehicleUpdate,
+    WorldEvent,
     WorldSnapshot,
 )
+from .optimizer import optimize
+from .reoptimize import reoptimize
 from .state import world
 
 
@@ -97,6 +103,53 @@ def reset_world() -> WorldSnapshot:
 
 
 # --------------------------------------------------------------------------- #
+# Optimization (Phase 5 — initial route solve)
+# --------------------------------------------------------------------------- #
+@app.post("/optimize", response_model=WorldSnapshot)
+def optimize_routes() -> WorldSnapshot:
+    """Run the initial OR-Tools solve, persist the plan / order assignments /
+    metrics into the live world, and return the updated snapshot.
+
+    The plan is written only into the in-memory ``WorldState`` (broadcasting is
+    Phase 7). If the solver finds no feasible plan the world is left untouched
+    and a 422 is returned instead of crashing.
+    """
+    result = optimize(world)
+    if result.status == "infeasible":
+        raise HTTPException(status_code=422, detail=result.message)
+    return world.snapshot()
+
+
+# --------------------------------------------------------------------------- #
+# Dynamic re-optimization (Phase 6)
+# --------------------------------------------------------------------------- #
+@app.post("/reoptimize", response_model=WorldSnapshot)
+def reoptimize_routes() -> WorldSnapshot:
+    """Warm-started, commitment-respecting re-solve of the tail of the current
+    plan (freeze COMPLETED, pin IN_PROGRESS, re-enter at live positions). Persists
+    the new plan / order fields / metrics and returns the updated snapshot. On an
+    infeasible solve the world is left untouched and a 422 is returned.
+    """
+    result = reoptimize(world)
+    if result.status == "infeasible":
+        raise HTTPException(status_code=422, detail=result.message)
+    return world.snapshot()
+
+
+@app.post("/events", response_model=WorldEvent)
+def fire_event(req: EventRequest) -> WorldEvent:
+    """Apply a disruption (matching the frontend's event-console types), which
+    mutates the world, re-optimizes the tail, and returns the recorded
+    ``WorldEvent`` (real reopt_ms / route_changes / reassignments / affected
+    lists). An unknown event ``type`` yields a 400.
+    """
+    try:
+        return apply_event(world, req.type, req.payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+# --------------------------------------------------------------------------- #
 # Vehicles CRUD
 # --------------------------------------------------------------------------- #
 @app.get("/vehicles", response_model=list[Vehicle])
@@ -135,6 +188,18 @@ def delete_vehicle(vehicle_id: str) -> Response:
         raise HTTPException(status_code=404, detail="vehicle not found")
     db.delete_vehicle(vehicle_id)
     return Response(status_code=204)
+
+
+@app.post("/vehicles/{vehicle_id}/position", response_model=Vehicle)
+def set_vehicle_position(vehicle_id: str, pos: VehiclePosition) -> Vehicle:
+    """Sim support: move a vehicle to its live position (and optional leg
+    progress) so the next re-optimization re-enters it there, not at the depot.
+    This is live in-memory state only — it is not mirrored to the catalog.
+    """
+    veh = world.set_vehicle_position(vehicle_id, pos.lat, pos.lng, pos.progress)
+    if veh is None:
+        raise HTTPException(status_code=404, detail="vehicle not found")
+    return veh
 
 
 # --------------------------------------------------------------------------- #
