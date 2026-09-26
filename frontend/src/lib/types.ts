@@ -31,9 +31,12 @@ export interface Order {
 
 export type VehicleStatus = "ACTIVE" | "BROKEN" | "IDLE";
 
+export type VehicleType = "TRUCK" | "VAN" | "BIKE";
+
 export interface Vehicle {
   id: string;
   name: string;
+  type: VehicleType;
   color: string;
   location: LatLng; // live position
   home: LatLng; // depot location
@@ -63,6 +66,9 @@ export interface RouteStop {
 
 export type Plan = Record<string, RouteStop[]>; // vehicleId -> ordered stops
 
+// UI section shown in the sidebar / dashboard.
+export type Section = "overview" | "orders" | "drivers" | "simulator" | "compare";
+
 export interface Metrics {
   totalDistanceKm: number;
   totalTimeMin: number;
@@ -82,6 +88,14 @@ export type EventType =
   | "TIME_CHANGE"
   | "ADDRESS_CHANGE";
 
+// A single order moving between vehicles (or in/out of the plan) during a re-optimization.
+export interface Reassignment {
+  orderId: string;
+  label: string;
+  from: string | null; // previous vehicle id (null = was unassigned/dropped)
+  to: string | null; // new vehicle id (null = dropped)
+}
+
 export interface WorldEvent {
   id: string;
   type: EventType;
@@ -91,4 +105,5 @@ export interface WorldEvent {
   affectedOrders: string[];
   reoptMs: number;
   routeChanges: number;
+  reassignments: Reassignment[];
 }

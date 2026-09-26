@@ -23,51 +23,56 @@ export default function Topbar() {
   const reset = useWorldStore((s) => s.reset);
 
   const trafficPct = Math.round((traffic - 1) * 100);
-  const trafficColor =
-    traffic >= 1.9 ? "#ef4444" : traffic >= 1.4 ? "#f97316" : "#4ade80";
+  const trafficColor = traffic >= 1.9 ? "#ef4444" : traffic >= 1.4 ? "#f97316" : "#4ade80";
 
   return (
-    <header className="flex items-center gap-4 border-b border-slate-800 bg-slate-900/70 px-4 py-2.5 backdrop-blur">
+    <header className="flex flex-none items-center gap-4 border-b border-line bg-surface/70 px-4 py-2.5 backdrop-blur">
       <div className="flex items-center gap-2">
-        <span className="grid h-8 w-8 place-items-center rounded-md bg-sky-500/15 text-sky-400">
+        <span className="grid h-8 w-8 place-items-center rounded-md bg-brand2/15 text-brand">
           <Truck width={18} height={18} />
         </span>
         <div className="leading-tight">
-          <div className="text-sm font-semibold tracking-tight text-slate-100">
-            DaakFlow
-          </div>
-          <div className="text-[10px] uppercase tracking-widest text-slate-500">
-            Adaptive Routing
-          </div>
+          <h1 className="text-sm font-semibold tracking-tight text-ink">DaakFlow</h1>
+          <div className="text-[10px] uppercase tracking-widest text-faint">Adaptive Routing</div>
         </div>
       </div>
 
-      <div className="ml-2 flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-1.5">
-        <span className="text-[10px] uppercase tracking-wider text-slate-500">
-          Sim clock
-        </span>
-        <span className="font-mono text-lg font-semibold tabular-nums text-slate-100">
-          {fmtTime(simTime)}
+      <div className="ml-2 flex items-center gap-2 rounded-md border border-line bg-surface2/60 px-3 py-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-faint">Sim clock</span>
+        <span className="font-mono text-lg font-semibold tabular-nums text-ink">{fmtTime(simTime)}</span>
+      </div>
+
+      <div
+        className="flex items-center gap-1.5 rounded-md border border-line bg-surface2/60 px-2.5 py-1.5"
+        aria-live="polite"
+      >
+        <span
+          className={`h-2 w-2 rounded-full ${running ? "live-dot bg-live" : "bg-faint"}`}
+          aria-hidden="true"
+        />
+        <span className={`text-[10px] font-semibold uppercase tracking-wider ${running ? "text-live" : "text-faint"}`}>
+          {running ? "Live" : "Paused"}
         </span>
       </div>
 
       <button
         onClick={running ? pause : play}
-        className="flex items-center gap-2 rounded-md bg-sky-500 px-3 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400"
+        aria-label={running ? "Pause simulation" : "Play simulation"}
+        className="flex items-center gap-2 rounded-md bg-brand2 px-3 py-2 text-sm font-medium text-white transition hover:bg-brand"
       >
         {running ? <Pause /> : <Play />}
         {running ? "Pause" : "Play"}
       </button>
 
-      <div className="flex items-center overflow-hidden rounded-md border border-slate-800">
+      <div className="flex items-center overflow-hidden rounded-md border border-line" role="group" aria-label="Playback speed">
         {SPEEDS.map((s) => (
           <button
             key={s.value}
             onClick={() => setSpeed(s.value)}
+            aria-pressed={speed === s.value}
+            aria-label={`${s.label} speed`}
             className={`px-2.5 py-2 text-xs font-medium transition ${
-              speed === s.value
-                ? "bg-slate-700 text-slate-100"
-                : "bg-slate-950/60 text-slate-400 hover:bg-slate-800"
+              speed === s.value ? "bg-surface3 text-ink" : "bg-surface2/60 text-faint hover:bg-surface2"
             }`}
           >
             {s.label}
@@ -76,14 +81,9 @@ export default function Topbar() {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <div className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/60 px-3 py-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">
-            Traffic
-          </span>
-          <span
-            className="font-mono text-sm font-semibold"
-            style={{ color: trafficColor }}
-          >
+        <div className="flex items-center gap-2 rounded-md border border-line bg-surface2/60 px-3 py-1.5">
+          <span className="text-[10px] uppercase tracking-wider text-faint">Traffic</span>
+          <span className="font-mono text-sm font-semibold" style={{ color: trafficColor }}>
             {trafficPct > 0 ? `+${trafficPct}%` : "clear"}
           </span>
         </div>
@@ -98,7 +98,7 @@ export default function Topbar() {
 
         <button
           onClick={reset}
-          className="flex items-center gap-2 rounded-md border border-slate-700 bg-slate-800/60 px-3 py-2 text-sm font-medium text-slate-300 transition hover:bg-slate-700"
+          className="flex items-center gap-2 rounded-md border border-line2 bg-surface2/60 px-3 py-2 text-sm font-medium text-muted transition hover:bg-surface3 hover:text-ink"
         >
           <Reset />
           Reset

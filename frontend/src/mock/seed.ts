@@ -1,4 +1,4 @@
-import type { Depot, Vehicle, Order, Priority } from "../lib/types";
+import type { Depot, Vehicle, Order, Priority, VehicleType } from "../lib/types";
 
 // Sim day runs 08:00 (480) to 18:00 (1080), minutes from midnight.
 export const DAY_START = 480;
@@ -11,7 +11,17 @@ export const DEPOT: Depot = {
   location: { lat: 12.9716, lng: 77.5946 },
 };
 
-const VEHICLE_HUES = ["#38bdf8", "#a78bfa", "#4ade80", "#fb7185"];
+export const VEHICLE_HUES = ["#38bdf8", "#a78bfa", "#4ade80", "#fb7185", "#fbbf24", "#22d3ee", "#f472b6"];
+
+// Sensible starting specs per vehicle type — used to prefill the "add vehicle" form.
+export const VEHICLE_TYPE_META: Record<
+  VehicleType,
+  { label: string; capacityWeight: number; capacityVolume: number; speedKmh: number }
+> = {
+  TRUCK: { label: "Truck", capacityWeight: 600, capacityVolume: 120, speedKmh: 34 },
+  VAN: { label: "Van", capacityWeight: 400, capacityVolume: 90, speedKmh: 42 },
+  BIKE: { label: "Bike", capacityWeight: 60, capacityVolume: 20, speedKmh: 30 },
+};
 
 export function makeVehicles(): Vehicle[] {
   const base = {
@@ -28,6 +38,7 @@ export function makeVehicles(): Vehicle[] {
       ...base,
       id: "v1",
       name: "Truck 01",
+      type: "TRUCK",
       color: VEHICLE_HUES[0],
       location: { ...DEPOT.location },
       capacityWeight: 600,
@@ -38,6 +49,7 @@ export function makeVehicles(): Vehicle[] {
       ...base,
       id: "v2",
       name: "Truck 02",
+      type: "TRUCK",
       color: VEHICLE_HUES[1],
       location: { ...DEPOT.location },
       capacityWeight: 550,
@@ -48,6 +60,7 @@ export function makeVehicles(): Vehicle[] {
       ...base,
       id: "v3",
       name: "Van 03",
+      type: "VAN",
       color: VEHICLE_HUES[2],
       location: { ...DEPOT.location },
       capacityWeight: 400,
@@ -58,6 +71,7 @@ export function makeVehicles(): Vehicle[] {
       ...base,
       id: "v4",
       name: "Van 04",
+      type: "VAN",
       color: VEHICLE_HUES[3],
       location: { ...DEPOT.location },
       capacityWeight: 400,

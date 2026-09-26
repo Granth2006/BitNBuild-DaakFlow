@@ -1,8 +1,9 @@
 "use client";
 
-import { MapContainer, TileLayer, Marker, Polyline, Tooltip } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { Fragment, useEffect } from "react";
 import { useWorldStore } from "../store/useWorldStore";
 import { PRIORITY_META, STATUS_META } from "../lib/palette";
 import type { LatLng, Order, Vehicle } from "../lib/types";
@@ -10,50 +11,73 @@ import { fmtTime } from "../lib/geo";
 
 const CENTER: [number, number] = [12.9716, 77.5946];
 
-// CARTO's basemap CDN now requires an API key and watermarks anonymous tiles,
-// so we default to Esri's keyless dark-gray basemap. To use your own provider
-// (e.g. a keyed CARTO or MapTiler URL) set NEXT_PUBLIC_MAP_TILE_URL in
-// frontend/.env.local — no code change needed.
+// Light "Voyager" basemap from CARTO (matches the reference). The key is read
+// from NEXT_PUBLIC_CARTO_KEY (frontend/.env.local). If it's missing we fall
+// back to keyless OpenStreetMap tiles so the map still renders. You can also
+// hard-override the URL with NEXT_PUBLIC_MAP_TILE_URL.
+const CARTO_KEY = process.env.NEXT_PUBLIC_CARTO_KEY;
 const TILE_URL =
   process.env.NEXT_PUBLIC_MAP_TILE_URL ??
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+  (CARTO_KEY
+    ? `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_KEY}`
+    : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png");
 const TILE_ATTRIBUTION =
-  process.env.NEXT_PUBLIC_MAP_TILE_ATTRIBUTION ?? "&copy; Esri";
+  process.env.NEXT_PUBLIC_MAP_TILE_ATTRIBUTION ??
+  (CARTO_KEY
+    ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
+    : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>');
+
+const TRUCK_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 3h13v11H1zM14 7h4l3 3v4h-7"/><circle cx="5" cy="17.5" r="1.7"/><circle cx="17.5" cy="17.5" r="1.7"/></svg>`;
+const WARN_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.2 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg>`;
+const HOME_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 8.35V21H2V8.35a2 2 0 0 1 1.26-1.86l8-3.2a2 2 0 0 1 1.48 0l8 3.2A2 2 0 0 1 22 8.35Z"/><path d="M6 18v-6h12v6M6 15h12"/></svg>`;
 
 function depotIcon() {
   return L.divIcon({
     className: "",
-    html: `<div style="width:18px;height:18px;background:#f8fafc;border:2px solid #0f172a;transform:rotate(45deg);box-shadow:0 0 8px rgba(248,250,252,.6)"></div>`,
-    iconSize: [18, 18],
-    iconAnchor: [9, 9],
+    html: `<div class="mk-depot">${HOME_SVG}</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
   });
 }
 
 function vehicleIcon(v: Vehicle) {
   const broken = v.status === "BROKEN";
-  const ring = broken ? "#ef4444" : v.color;
-  const glyph = broken ? "&#9888;" : v.name.replace(/\D/g, "") || "•";
+  const glyph = broken ? WARN_SVG : TRUCK_SVG;
   return L.divIcon({
     className: "",
-    html: `<div style="display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:${ring};color:#0b1120;font:700 11px var(--font-geist-mono,monospace);border:2px solid #e2e8f0;box-shadow:0 0 10px ${ring}aa">${glyph}</div>`,
-    iconSize: [26, 26],
-    iconAnchor: [13, 13],
+    html: `<div class="mk-veh${broken ? " mk-veh--broken" : ""}" style="--c:${v.color}">${glyph}</div>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
   });
 }
 
-function orderIcon(o: Order) {
+function orderIcon(o: Order, selected: boolean) {
   const s = STATUS_META[o.status];
   const p = PRIORITY_META[o.priority];
   const dim = o.status === "COMPLETED" || o.status === "CANCELLED" || o.status === "DROPPED";
+  const cls = `mk-order${dim ? " mk-order--dim" : ""}${selected ? " mk-order--sel" : ""}`;
   return L.divIcon({
     className: "",
-    html: `<div style="width:16px;height:16px;border-radius:50%;background:${s.color};border:2px solid ${p.color};opacity:${dim ? 0.45 : 1};box-shadow:0 0 6px ${s.color}88"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    html: `<div class="${cls}"><div class="mk-order__pin" style="--fill:${s.color};--ring:${p.color}"><span class="mk-order__lbl">${o.label.replace("#", "")}</span></div></div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 22],
+    tooltipAnchor: [0, -18],
   });
 }
 
 const toLL = (p: LatLng): [number, number] => [p.lat, p.lng];
+
+// Keeps Leaflet's canvas in sync when the surrounding layout resizes
+// (sidebar collapse, dock changes) — otherwise tiles show grey gaps.
+function ResizeSync() {
+  const map = useMap();
+  useEffect(() => {
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(map.getContainer());
+    return () => ro.disconnect();
+  }, [map]);
+  return null;
+}
 
 export default function MapView() {
   const depot = useWorldStore((s) => s.depot);
@@ -61,17 +85,15 @@ export default function MapView() {
   const orders = useWorldStore((s) => s.orders);
   const plan = useWorldStore((s) => s.plan);
   const select = useWorldStore((s) => s.select);
+  const selectedId = useWorldStore((s) => s.selectedId);
+
   const byId: Record<string, Order> = {};
   for (const o of orders) byId[o.id] = o;
 
   return (
-    <MapContainer
-      center={CENTER}
-      zoom={12}
-      className="h-full w-full"
-      zoomControl={true}
-    >
+    <MapContainer center={CENTER} zoom={12} className="h-full w-full" zoomControl={true}>
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
+      <ResizeSync />
 
       {vehicles.map((v) => {
         const stops = (plan[v.id] || [])
@@ -79,12 +101,16 @@ export default function MapView() {
           .filter((o) => o && o.status !== "COMPLETED" && o.status !== "CANCELLED" && o.status !== "DROPPED");
         if (!stops.length) return null;
         const path: [number, number][] = [toLL(v.location), ...stops.map((o) => toLL(o.location))];
+        const dashed = v.status === "BROKEN";
         return (
-          <Polyline
-            key={`route-${v.id}`}
-            positions={path}
-            pathOptions={{ color: v.color, weight: 3, opacity: 0.85, dashArray: v.status === "BROKEN" ? "6 8" : undefined }}
-          />
+          <Fragment key={`route-${v.id}`}>
+            {/* white casing underneath for contrast on the light basemap */}
+            <Polyline positions={path} pathOptions={{ color: "#ffffff", weight: 6, opacity: 0.9 }} />
+            <Polyline
+              positions={path}
+              pathOptions={{ color: v.color, weight: 3.5, opacity: 0.95, dashArray: dashed ? "5 8" : undefined }}
+            />
+          </Fragment>
         );
       })}
 
@@ -96,7 +122,7 @@ export default function MapView() {
         <Marker
           key={o.id}
           position={toLL(o.location)}
-          icon={orderIcon(o)}
+          icon={orderIcon(o, o.id === selectedId)}
           eventHandlers={{ click: () => select(o.id) }}
         >
           <Tooltip direction="top">

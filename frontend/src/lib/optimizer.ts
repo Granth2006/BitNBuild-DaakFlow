@@ -343,4 +343,76 @@ function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
 
+/**
+ * Project how the day would go WITHOUT dynamic re-optimization: the initial
+ * 08:00 plan is executed exactly as committed, against the world as it now
+ * stands.
+ *  - Broken / removed vehicles cannot run, so their planned stops are missed.
+ *  - Orders that arrived after the initial plan were never scheduled → missed.
+ *  - Cancelled orders are excluded from both sides (the customer cancelled anyway).
+ *  - Current traffic and any window changes are applied to the frozen routes.
+ * Returns the same Metrics shape as the adaptive plan for a like-for-like compare.
+ */
+export function projectStatic(
+  initialPlan: Plan,
+  initialVehicles: Vehicle[],
+  currentVehicles: Vehicle[],
+  orders: Order[],
+  trafficFactor: number,
+): Metrics {
+  const om = orderMap(orders);
+  const vById: Record<string, Vehicle> = {};
+  for (const v of initialVehicles) vById[v.id] = v;
+  const usable = new Set(
+    currentVehicles.filter((v) => v.status !== "BROKEN").map((v) => v.id),
+  );
+
+  let dist = 0;
+  let late = 0;
+  let makespan = 0;
+  let utilSum = 0;
+  let utilCount = 0;
+  const served = new Set<string>();
+
+  for (const vid of Object.keys(initialPlan)) {
+    const v = vById[vid];
+    if (!v || !usable.has(vid)) continue; // broken or removed → route abandoned
+    let cur = v.home;
+    let t = v.shiftStart;
+    let load = 0;
+    for (const s of initialPlan[vid]) {
+      const o = om[s.orderId];
+      if (!o || o.status === "CANCELLED") continue; // gone from the world
+      dist += roadKm(cur, o.location);
+      t += travelMin(cur, o.location, v.speedKmh, trafficFactor);
+      if (t < o.windowStart) t = o.windowStart;
+      if (t - o.windowEnd > LATE_SLACK) late += 1;
+      if (t > makespan) makespan = t;
+      t += SERVICE_MIN;
+      cur = o.location;
+      load += o.weight;
+      served.add(o.id);
+    }
+    utilSum += Math.min(1, load / v.capacityWeight);
+    utilCount += 1;
+  }
+
+  // Anything still in the world but not covered by the frozen plan is missed.
+  let dropped = 0;
+  for (const o of orders) {
+    if (o.status === "CANCELLED") continue;
+    if (!served.has(o.id)) dropped += 1;
+  }
+
+  return {
+    totalDistanceKm: round1(dist),
+    totalTimeMin: Math.round(makespan),
+    lateDeliveries: late,
+    routeChanges: 0,
+    utilizationPct: utilCount ? Math.round((utilSum / utilCount) * 100) : 0,
+    reoptMs: 0,
+    dropped,
+  };
+}
+
 

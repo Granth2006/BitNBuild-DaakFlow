@@ -44,21 +44,19 @@ export default function OrderPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-        <div className="flex flex-wrap gap-1.5 text-[10px] text-slate-400">
+      <div className="flex items-center justify-between border-b border-line px-3 py-2">
+        <div className="flex flex-wrap gap-1.5 text-[10px] text-muted">
           <span>{orders.length} orders</span>
-          <span className="text-slate-600">·</span>
+          <span className="text-faint">·</span>
           <span className="text-emerald-400">{counts.COMPLETED || 0} done</span>
-          <span className="text-slate-600">·</span>
+          <span className="text-faint">·</span>
           <span className="text-cyan-400">{counts.IN_PROGRESS || 0} en route</span>
-          <span className="text-slate-600">·</span>
-          <span className="text-slate-400">
-            {(counts.PENDING || 0) + (counts.ASSIGNED || 0)} queued
-          </span>
+          <span className="text-faint">·</span>
+          <span className="text-muted">{(counts.PENDING || 0) + (counts.ASSIGNED || 0)} queued</span>
         </div>
         <button
           onClick={() => fireEvent("NEW_ORDER")}
-          className="flex items-center gap-1 rounded bg-sky-500/15 px-2 py-1 text-xs font-medium text-sky-300 transition hover:bg-sky-500/25"
+          className="flex items-center gap-1 rounded bg-brand2/15 px-2 py-1 text-xs font-medium text-brand transition hover:bg-brand2/25"
         >
           <Plus width={12} height={12} />
           Add
@@ -74,8 +72,8 @@ export default function OrderPanel() {
             <div
               key={o.id}
               onClick={() => select(selected ? null : o.id)}
-              className={`cursor-pointer border-b border-slate-800/60 px-3 py-2 transition ${
-                selected ? "bg-slate-800/70" : "hover:bg-slate-800/40"
+              className={`cursor-pointer border-b border-line/60 px-3 py-2 transition ${
+                selected ? "bg-surface3/70" : "hover:bg-surface2/60"
               } ${terminal ? "opacity-60" : ""}`}
             >
               <div className="flex items-center gap-2">
@@ -86,7 +84,7 @@ export default function OrderPanel() {
                 >
                   {o.label}
                 </span>
-                <span className="truncate text-sm text-slate-200">{o.address}</span>
+                <span className="truncate text-sm text-ink">{o.address}</span>
                 <div className="ml-auto flex items-center gap-2">
                   <StatusBadge status={o.status} />
                   {!terminal && (
@@ -95,7 +93,8 @@ export default function OrderPanel() {
                         e.stopPropagation();
                         cancelOrder(o.id);
                       }}
-                      className="rounded p-0.5 text-slate-500 transition hover:bg-rose-500/20 hover:text-rose-400"
+                      className="rounded p-0.5 text-faint transition hover:bg-rose-500/20 hover:text-rose-400"
+                      aria-label={`Cancel order ${o.label}`}
                       title="Cancel order"
                     >
                       <Close width={13} height={13} />
@@ -103,26 +102,22 @@ export default function OrderPanel() {
                   )}
                 </div>
               </div>
-              <div className="mt-1 flex items-center gap-2 pl-8 text-[11px] text-slate-500">
+              <div className="mt-1 flex items-center gap-2 pl-8 text-[11px] text-faint">
                 <span>
                   {fmtTime(o.windowStart)}–{fmtTime(o.windowEnd)}
                 </span>
-                <span className="text-slate-600">·</span>
+                <span className="text-line2">·</span>
                 <span>{o.weight} kg</span>
                 {o.assignedVehicle && (
                   <>
-                    <span className="text-slate-600">·</span>
-                    <span className="text-slate-400">{vName[o.assignedVehicle]}</span>
+                    <span className="text-line2">·</span>
+                    <span className="text-muted">{vName[o.assignedVehicle]}</span>
                   </>
                 )}
                 {o.eta != null && !terminal && (
                   <>
-                    <span className="text-slate-600">·</span>
-                    <span
-                      className={o.eta > o.windowEnd ? "text-rose-400" : "text-slate-400"}
-                    >
-                      ETA {fmtTime(o.eta)}
-                    </span>
+                    <span className="text-line2">·</span>
+                    <span className={o.eta > o.windowEnd ? "text-rose-400" : "text-muted"}>ETA {fmtTime(o.eta)}</span>
                   </>
                 )}
               </div>
