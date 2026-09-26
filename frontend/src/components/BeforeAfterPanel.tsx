@@ -1,6 +1,7 @@
 "use client";
 
 import { useWorldStore } from "../store/useWorldStore";
+import { projectStatic } from "../lib/optimizer";
 import { fmtTime } from "../lib/geo";
 import type { Metrics } from "../lib/types";
 
@@ -16,7 +17,7 @@ const ROWS: Row[] = [
   { key: "totalDistanceKm", label: "Total distance", unit: "km", goodDir: "down", fmt: (n) => `${n}` },
   { key: "totalTimeMin", label: "Completion time", unit: "", goodDir: "down", fmt: (n) => fmtTime(n) },
   { key: "lateDeliveries", label: "Late deliveries", unit: "stops", goodDir: "down", fmt: (n) => `${n}` },
-  { key: "dropped", label: "Dropped orders", unit: "orders", goodDir: "down", fmt: (n) => `${n}` },
+  { key: "dropped", label: "Unserved stops", unit: "stops", goodDir: "down", fmt: (n) => `${n}` },
   { key: "utilizationPct", label: "Fleet utilization", unit: "%", goodDir: "up", fmt: (n) => `${n}` },
 ];
 
@@ -47,13 +48,18 @@ function Bar({ value, scale, kind }: { value: number; scale: number; kind: "befo
 
 export default function BeforeAfterPanel() {
   const metrics = useWorldStore((s) => s.metrics);
-  const baseline = useWorldStore((s) => s.baseline);
+  const initialPlan = useWorldStore((s) => s.initialPlan);
+  const initialVehicles = useWorldStore((s) => s.initialVehicles);
+  const vehicles = useWorldStore((s) => s.vehicles);
+  const orders = useWorldStore((s) => s.orders);
+  const trafficFactor = useWorldStore((s) => s.trafficFactor);
   const events = useWorldStore((s) => s.events);
 
-  if (!metrics || !baseline) {
+  if (!metrics || Object.keys(initialPlan).length === 0) {
     return <div className="p-3 text-[11px] text-faint">Initializing baseline…</div>;
   }
 
+  const baseline = projectStatic(initialPlan, initialVehicles, vehicles, orders, trafficFactor);
   const n = events.length;
   const avgReopt = n ? Math.round(events.reduce((a, e) => a + e.reoptMs, 0) / n) : 0;
 

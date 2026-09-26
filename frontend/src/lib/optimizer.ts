@@ -374,9 +374,17 @@ export function projectStatic(
   let utilCount = 0;
   const served = new Set<string>();
 
+  // Orders physically delivered in reality are served in the static world too —
+  // a later breakdown or reassignment never un-delivers a completed stop. Seed
+  // them first so a completed order on a since-broken vehicle isn't miscounted
+  // as unserved.
+  for (const o of orders) {
+    if (o.status === "COMPLETED") served.add(o.id);
+  }
+
   for (const vid of Object.keys(initialPlan)) {
     const v = vById[vid];
-    if (!v || !usable.has(vid)) continue; // broken or removed → route abandoned
+    if (!v || !usable.has(vid)) continue; // broken or removed → remaining route abandoned
     let cur = v.home;
     let t = v.shiftStart;
     let load = 0;
@@ -397,10 +405,12 @@ export function projectStatic(
     utilCount += 1;
   }
 
-  // Anything still in the world but not covered by the frozen plan is missed.
+  // Anything still deliverable but not covered by the frozen plan is genuinely
+  // missed: new orders that arrived after 08:00 (never scheduled) or stops
+  // stranded on a broken/removed vehicle. Completed orders are already served.
   let dropped = 0;
   for (const o of orders) {
-    if (o.status === "CANCELLED") continue;
+    if (o.status === "CANCELLED" || o.status === "COMPLETED") continue;
     if (!served.has(o.id)) dropped += 1;
   }
 

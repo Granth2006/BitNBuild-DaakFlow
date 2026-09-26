@@ -79,6 +79,29 @@ function ResizeSync() {
   return null;
 }
 
+// When a driver is focused, ease the viewport to that vehicle + its stops.
+// Reads live state via getState() so it fires only on focus change, not on
+// every simulation tick.
+function FocusFly({ focusVehicleId }: { focusVehicleId: string | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!focusVehicleId) return;
+    const { vehicles, plan, orders } = useWorldStore.getState();
+    const v = vehicles.find((x) => x.id === focusVehicleId);
+    if (!v) return;
+    const byId: Record<string, Order> = {};
+    for (const o of orders) byId[o.id] = o;
+    const pts: [number, number][] = [toLL(v.location)];
+    for (const st of plan[focusVehicleId] || []) {
+      const o = byId[st.orderId];
+      if (o) pts.push(toLL(o.location));
+    }
+    if (pts.length <= 1) map.flyTo(pts[0] ?? CENTER, 14, { duration: 0.6 });
+    else map.flyToBounds(pts, { padding: [60, 60], duration: 0.6, maxZoom: 14 });
+  }, [focusVehicleId, map]);
+  return null;
+}
+
 export default function MapView() {
   const depot = useWorldStore((s) => s.depot);
   const vehicles = useWorldStore((s) => s.vehicles);
@@ -86,16 +109,26 @@ export default function MapView() {
   const plan = useWorldStore((s) => s.plan);
   const select = useWorldStore((s) => s.select);
   const selectedId = useWorldStore((s) => s.selectedId);
+  const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
 
   const byId: Record<string, Order> = {};
   for (const o of orders) byId[o.id] = o;
+
+  // When a driver is focused, only that vehicle's stops stay fully lit; every
+  // other order marker dims so the single route reads clearly.
+  const focusedOrderIds = new Set<string>();
+  if (focusVehicleId) {
+    for (const st of plan[focusVehicleId] || []) focusedOrderIds.add(st.orderId);
+  }
 
   return (
     <MapContainer center={CENTER} zoom={12} className="h-full w-full" zoomControl={true}>
       <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
       <ResizeSync />
+      <FocusFly focusVehicleId={focusVehicleId} />
 
       {vehicles.map((v) => {
+        if (focusVehicleId && v.id !== focusVehicleId) return null;
         const stops = (plan[v.id] || [])
           .map((st) => byId[st.orderId])
           .filter((o) => o && o.status !== "COMPLETED" && o.status !== "CANCELLED" && o.status !== "DROPPED");
@@ -123,6 +156,7 @@ export default function MapView() {
           key={o.id}
           position={toLL(o.location)}
           icon={orderIcon(o, o.id === selectedId)}
+          opacity={focusVehicleId && !focusedOrderIds.has(o.id) ? 0.25 : 1}
           eventHandlers={{ click: () => select(o.id) }}
         >
           <Tooltip direction="top">
@@ -134,16 +168,19 @@ export default function MapView() {
         </Marker>
       ))}
 
-      {vehicles.map((v) => (
-        <Marker key={v.id} position={toLL(v.location)} icon={vehicleIcon(v)}>
-          <Tooltip direction="top">
-            <span style={{ fontWeight: 600 }}>{v.name}</span> · {v.driver}
-            <br />
-            {v.status}
-            {v.status === "BROKEN" ? " (driver unavailable)" : ""}
-          </Tooltip>
-        </Marker>
-      ))}
+      {vehicles.map((v) => {
+        if (focusVehicleId && v.id !== focusVehicleId) return null;
+        return (
+          <Marker key={v.id} position={toLL(v.location)} icon={vehicleIcon(v)}>
+            <Tooltip direction="top">
+              <span style={{ fontWeight: 600 }}>{v.name}</span> · {v.driver}
+              <br />
+              {v.status}
+              {v.status === "BROKEN" ? " (driver unavailable)" : ""}
+            </Tooltip>
+          </Marker>
+        );
+      })}
     </MapContainer>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useWorldStore } from "../store/useWorldStore";
 import { fmtTime } from "../lib/geo";
-import type { Section } from "./Sidebar";
 import { Bolt, TrendingDown } from "./icons";
 
 function Stat({
@@ -29,11 +28,12 @@ function Stat({
   );
 }
 
-export default function OverviewPanel({ onJump }: { onJump: (s: Section) => void }) {
+export default function OverviewPanel() {
   const orders = useWorldStore((s) => s.orders);
   const vehicles = useWorldStore((s) => s.vehicles);
   const metrics = useWorldStore((s) => s.metrics);
   const events = useWorldStore((s) => s.events);
+  const setSection = useWorldStore((s) => s.setSection);
 
   const total = orders.length;
   const done = orders.filter((o) => o.status === "COMPLETED").length;
@@ -65,13 +65,13 @@ export default function OverviewPanel({ onJump }: { onJump: (s: Section) => void
 
       <div className="grid grid-cols-1 gap-2">
         <button
-          onClick={() => onJump("simulator")}
+          onClick={() => setSection("simulator")}
           className="flex items-center gap-2 rounded-lg bg-brand2 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-brand"
         >
           <Bolt width={15} height={15} /> Open Event Simulator
         </button>
         <button
-          onClick={() => onJump("compare")}
+          onClick={() => setSection("compare")}
           className="flex items-center gap-2 rounded-lg border border-line2 bg-surface2/60 px-3 py-2.5 text-sm font-medium text-muted transition hover:bg-surface3 hover:text-ink"
         >
           <TrendingDown width={15} height={15} /> See before / after impact

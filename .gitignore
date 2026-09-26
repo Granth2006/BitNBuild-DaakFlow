@@ -71,3 +71,5 @@ env/
 
 #AI
 .claude/
+
+memory.md

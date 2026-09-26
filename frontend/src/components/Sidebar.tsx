@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useWorldStore } from "../store/useWorldStore";
+import type { Section } from "../lib/types";
 import OverviewPanel from "./OverviewPanel";
 import OrderPanel from "./OrderPanel";
 import DriverPanel from "./DriverPanel";
@@ -9,21 +10,20 @@ import EventConsole from "./EventConsole";
 import BeforeAfterPanel from "./BeforeAfterPanel";
 import { Grid, Package, Users, Bolt, TrendingDown, ChevronLeft, Truck } from "./icons";
 
-export type Section = "overview" | "orders" | "drivers" | "simulator" | "compare";
-
 const SECTIONS: { id: Section; label: string; desc: string; icon: typeof Grid }[] = [
   { id: "overview", label: "Overview", desc: "Live operations summary", icon: Grid },
   { id: "orders", label: "Orders", desc: "Delivery queue & management", icon: Package },
-  { id: "drivers", label: "Drivers", desc: "Fleet & driver status", icon: Users },
+  { id: "drivers", label: "Drivers", desc: "Fleet & driver management", icon: Users },
   { id: "simulator", label: "Event Simulator", desc: "Inject disruptions · watch re-routing", icon: Bolt },
   { id: "compare", label: "Before / After", desc: "Impact of adaptive routing", icon: TrendingDown },
 ];
 
 export default function Sidebar() {
-  const [active, setActive] = useState<Section>("overview");
+  const activeSection = useWorldStore((s) => s.activeSection);
+  const setSection = useWorldStore((s) => s.setSection);
   const [open, setOpen] = useState(true);
   const eventCount = useWorldStore((s) => s.events.length);
-  const meta = SECTIONS.find((s) => s.id === active)!;
+  const meta = SECTIONS.find((s) => s.id === activeSection)!;
 
   return (
     <aside className="flex h-full flex-none">
@@ -40,12 +40,12 @@ export default function Sidebar() {
         </span>
         {SECTIONS.map((s) => {
           const Icon = s.icon;
-          const isActive = s.id === active;
+          const isActive = s.id === activeSection;
           return (
             <button
               key={s.id}
               onClick={() => {
-                setActive(s.id);
+                setSection(s.id);
                 setOpen(true);
               }}
               title={s.label}
@@ -85,12 +85,12 @@ export default function Sidebar() {
             <h2 className="text-sm font-semibold text-ink">{meta.label}</h2>
             <p className="mt-0.5 text-[11px] text-faint">{meta.desc}</p>
           </header>
-          <div key={active} className="fade-in min-h-0 flex-1">
-            {active === "overview" && <OverviewPanel onJump={setActive} />}
-            {active === "orders" && <OrderPanel />}
-            {active === "drivers" && <DriverPanel />}
-            {active === "simulator" && <EventConsole />}
-            {active === "compare" && <BeforeAfterPanel />}
+          <div key={activeSection} className="fade-in min-h-0 flex-1">
+            {activeSection === "overview" && <OverviewPanel />}
+            {activeSection === "orders" && <OrderPanel />}
+            {activeSection === "drivers" && <DriverPanel />}
+            {activeSection === "simulator" && <EventConsole />}
+            {activeSection === "compare" && <BeforeAfterPanel />}
           </div>
         </div>
       )}
