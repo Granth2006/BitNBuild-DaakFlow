@@ -28,6 +28,7 @@ import socketio
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
+from .config import settings
 from .db import db
 from .events import apply_event
 from .models import (
@@ -49,10 +50,11 @@ from .reoptimize import reoptimize
 from .simulation import Simulator
 from .state import world
 
-CORS_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+# Browser origins allowed for both the FastAPI CORS middleware and the
+# Socket.IO server. Defaults to the local dev frontend; override for production
+# via the CORS_ORIGINS env var (comma-separated). Because allow_credentials is
+# True, "*" is not a valid entry — list explicit origins.
+CORS_ORIGINS = settings.cors_origin_list
 
 # --------------------------------------------------------------------------- #
 # Realtime layer (Phase 7) — Socket.IO broadcast + background simulator
