@@ -137,6 +137,9 @@ class WorldState:
         self.sim_time: int = DAY_START
         self.traffic_factor: float = 1.0
         self.events: list[WorldEvent] = []
+        # Phase 7 — simulation clock controls (driven by /sim/* + the Simulator).
+        self.running: bool = False
+        self.speed: int = 3  # sim-minutes advanced per real tick
         self._veh_seq = 0
         self._ord_seq = 0
 
@@ -152,6 +155,8 @@ class WorldState:
             self.sim_time = DAY_START
             self.traffic_factor = 1.0
             self.events = []
+            self.running = False
+            self.speed = 3
             self._veh_seq = 0
             self._ord_seq = 0
 
@@ -171,6 +176,8 @@ class WorldState:
             self.sim_time = DAY_START
             self.traffic_factor = 1.0
             self.events = []
+            self.running = False
+            self.speed = 3
             # Keep id generators ahead of any hydrated user ids.
             self._veh_seq = _max_seq(v.id for v in vehicles)
             self._ord_seq = _max_seq(o.id for o in orders)
@@ -186,6 +193,8 @@ class WorldState:
                 sim_time=self.sim_time,
                 traffic_factor=self.traffic_factor,
                 events=list(self.events),
+                running=self.running,
+                speed=self.speed,
             )
 
     # -- vehicle CRUD ------------------------------------------------------- #

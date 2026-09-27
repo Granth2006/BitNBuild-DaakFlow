@@ -9,3 +9,9 @@ httpx==0.28.1
 pytest==8.3.4
 # Phase 5 — initial route optimizer (Google OR-Tools). cp313 wheel available.
 ortools==9.15.6755
+# Phase 7 — Socket.IO realtime broadcast (ASGI async server, wire-compatible
+# with the frontend's socket.io-client 4.x). bidict / python-engineio are
+# python-socketio's own deps, pinned here for reproducible installs.
+python-socketio==5.11.4
+python-engineio==4.14.0
+bidict==0.24.1

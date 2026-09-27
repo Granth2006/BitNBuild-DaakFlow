@@ -17,13 +17,11 @@ const MapView = dynamic(() => import("./MapView"), {
   ),
 });
 
-const TICK_MS = 600;
-
 export default function Dashboard() {
   useEffect(() => {
+    // Connect to the backend, subscribe to live broadcasts, and load state.
+    // The backend Simulator now drives the sim clock, so there is no local tick.
     useWorldStore.getState().init();
-    const id = setInterval(() => useWorldStore.getState().tick(), TICK_MS);
-    return () => clearInterval(id);
   }, []);
 
   return (

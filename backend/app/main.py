@@ -1,17 +1,30 @@
-"""DaakFlow backend — FastAPI application (Phase 4: data models + CRUD).
+"""DaakFlow backend — FastAPI application.
 
-No optimization/simulation here (that is Phase 5). The in-memory ``WorldState``
-is the live source of truth; the durable catalog is mirrored to Neon Postgres
-when reachable.
+Phases 4-6 built the data models, CRUD, optimizer, and disruption handlers. This
+module now also mounts the **Phase 7 realtime layer**: a Socket.IO server (ASGI)
+that broadcasts live world state, and a background :class:`Simulator` that
+advances the sim clock and streams vehicle motion. REST stays the command surface
+(including the new ``/sim/*`` controls); Socket.IO is broadcast-only.
 
-NOTE: every endpoint below is UNAUTHENTICATED — this is a local demo API. Add
-auth before exposing it beyond localhost.
+The in-memory ``WorldState`` is the live source of truth; the durable catalog is
+mirrored to Neon Postgres when reachable.
+
+NOTE: every endpoint below is UNAUTHENTICATED, and the Socket.IO server accepts
+any client from the CORS allow-list — this is a local demo API. Add auth before
+exposing it beyond localhost.
+
+Serving note: ``app`` is the plain FastAPI instance (used directly by the test
+suite's TestClient); ``asgi`` is that app wrapped with Socket.IO. Uvicorn must
+serve the wrapped app, e.g. ``uvicorn app.main:asgi --reload``.
 """
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from typing import Optional
 
+import socketio
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,6 +36,7 @@ from .models import (
     Order,
     OrderCreate,
     OrderUpdate,
+    SpeedRequest,
     Vehicle,
     VehicleCreate,
     VehiclePosition,
@@ -32,7 +46,61 @@ from .models import (
 )
 from .optimizer import optimize
 from .reoptimize import reoptimize
+from .simulation import Simulator
 from .state import world
+
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+# --------------------------------------------------------------------------- #
+# Realtime layer (Phase 7) — Socket.IO broadcast + background simulator
+# --------------------------------------------------------------------------- #
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=CORS_ORIGINS)
+simulator = Simulator(world, sio)
+
+# The event loop captured at startup so the *synchronous* FastAPI route handlers
+# (which Starlette runs in a threadpool) can schedule broadcasts back onto it.
+_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+@sio.event
+async def connect(sid, environ, auth=None):
+    """On connect, hand the new client the full current world state."""
+    await sio.emit("state:update", world.snapshot().model_dump(by_alias=True), to=sid)
+
+
+def _emit(event: str, data) -> None:
+    """Fire-and-forget a Socket.IO broadcast from a sync request handler.
+
+    Schedules the coroutine onto the running loop captured at startup; routes
+    never block on delivery. A no-op if no loop is available (import time or the
+    shutdown window), so it is always safe to call.
+    """
+    loop = _loop
+    if loop is None:
+        return
+    try:
+        asyncio.run_coroutine_threadsafe(sio.emit(event, data), loop)
+    except RuntimeError:
+        pass
+
+
+def broadcast_state() -> None:
+    """Broadcast the full ``WorldSnapshot`` to every client."""
+    _emit("state:update", world.snapshot().model_dump(by_alias=True))
+
+
+def broadcast_plan_changed() -> None:
+    """Broadcast ``plan:changed`` (plan + metrics) after any re-solve."""
+    dumped = world.snapshot().model_dump(by_alias=True)
+    _emit("plan:changed", {"plan": dumped["plan"], "metrics": dumped["metrics"]})
+
+
+def broadcast_event(evt: WorldEvent) -> None:
+    """Broadcast ``event:applied`` (the recorded disruption) to every client."""
+    _emit("event:applied", evt.model_dump(by_alias=True))
 
 
 def _seed_everything() -> None:
@@ -44,6 +112,8 @@ def _seed_everything() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _loop
+    _loop = asyncio.get_running_loop()
     db.init()
     world.seed()
     if db.enabled:
@@ -55,17 +125,20 @@ async def lifespan(app: FastAPI):
                 depot, vehicles, orders = loaded
                 world.load_catalog(depot, vehicles, orders)
     app.state.db_status = db.status
+    simulator.start()  # inert until world.running is set via /sim/play
     yield
+    simulator.stop()
+    _loop = None
 
 
-app = FastAPI(title="DaakFlow API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="DaakFlow API", version="0.7.0", lifespan=lifespan)
+
+# ASGI app that serves both Socket.IO and the FastAPI routes. Uvicorn entrypoint.
+asgi = socketio.ASGIApp(sio, other_asgi_app=app)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -93,12 +166,46 @@ def get_depot() -> Depot:
 @app.post("/seed", response_model=WorldSnapshot)
 def seed_world() -> WorldSnapshot:
     _seed_everything()
+    broadcast_state()
     return world.snapshot()
 
 
 @app.post("/reset", response_model=WorldSnapshot)
 def reset_world() -> WorldSnapshot:
     _seed_everything()
+    broadcast_state()
+    return world.snapshot()
+
+
+# --------------------------------------------------------------------------- #
+# Simulation controls (Phase 7) — commands are REST; sockets broadcast only
+# --------------------------------------------------------------------------- #
+@app.post("/sim/play", response_model=WorldSnapshot)
+def sim_play() -> WorldSnapshot:
+    """Start (or resume) the sim clock. The background loop then advances the
+    world every tick and streams ``vehicle:move`` frames."""
+    with world._lock:
+        world.running = world.sim_time < 1080  # don't "run" a finished day
+    simulator.start()  # ensure the loop exists (idempotent)
+    broadcast_state()
+    return world.snapshot()
+
+
+@app.post("/sim/pause", response_model=WorldSnapshot)
+def sim_pause() -> WorldSnapshot:
+    """Pause the sim clock (the loop keeps spinning but advances nothing)."""
+    with world._lock:
+        world.running = False
+    broadcast_state()
+    return world.snapshot()
+
+
+@app.post("/sim/speed", response_model=WorldSnapshot)
+def sim_speed(req: SpeedRequest) -> WorldSnapshot:
+    """Set how many sim-minutes each real tick advances."""
+    with world._lock:
+        world.speed = req.speed
+    broadcast_state()
     return world.snapshot()
 
 
@@ -110,13 +217,14 @@ def optimize_routes() -> WorldSnapshot:
     """Run the initial OR-Tools solve, persist the plan / order assignments /
     metrics into the live world, and return the updated snapshot.
 
-    The plan is written only into the in-memory ``WorldState`` (broadcasting is
-    Phase 7). If the solver finds no feasible plan the world is left untouched
-    and a 422 is returned instead of crashing.
+    If the solver finds no feasible plan the world is left untouched and a 422 is
+    returned instead of crashing.
     """
     result = optimize(world)
     if result.status == "infeasible":
         raise HTTPException(status_code=422, detail=result.message)
+    broadcast_plan_changed()
+    broadcast_state()
     return world.snapshot()
 
 
@@ -133,6 +241,8 @@ def reoptimize_routes() -> WorldSnapshot:
     result = reoptimize(world)
     if result.status == "infeasible":
         raise HTTPException(status_code=422, detail=result.message)
+    broadcast_plan_changed()
+    broadcast_state()
     return world.snapshot()
 
 
@@ -144,9 +254,13 @@ def fire_event(req: EventRequest) -> WorldEvent:
     lists). An unknown event ``type`` yields a 400.
     """
     try:
-        return apply_event(world, req.type, req.payload)
+        evt = apply_event(world, req.type, req.payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    broadcast_event(evt)
+    broadcast_plan_changed()
+    broadcast_state()
+    return evt
 
 
 # --------------------------------------------------------------------------- #
@@ -169,6 +283,7 @@ def get_vehicle(vehicle_id: str) -> Vehicle:
 def create_vehicle(draft: VehicleCreate) -> Vehicle:
     veh = world.add_vehicle(draft)
     db.upsert_vehicle(veh)
+    broadcast_state()
     return veh
 
 
@@ -179,6 +294,7 @@ def update_vehicle(vehicle_id: str, patch: VehicleUpdate) -> Vehicle:
     if veh is None:
         raise HTTPException(status_code=404, detail="vehicle not found")
     db.upsert_vehicle(veh)
+    broadcast_state()
     return veh
 
 
@@ -187,6 +303,7 @@ def delete_vehicle(vehicle_id: str) -> Response:
     if not world.delete_vehicle(vehicle_id):
         raise HTTPException(status_code=404, detail="vehicle not found")
     db.delete_vehicle(vehicle_id)
+    broadcast_state()
     return Response(status_code=204)
 
 
@@ -199,6 +316,7 @@ def set_vehicle_position(vehicle_id: str, pos: VehiclePosition) -> Vehicle:
     veh = world.set_vehicle_position(vehicle_id, pos.lat, pos.lng, pos.progress)
     if veh is None:
         raise HTTPException(status_code=404, detail="vehicle not found")
+    broadcast_state()
     return veh
 
 
@@ -222,6 +340,7 @@ def get_order(order_id: str) -> Order:
 def create_order(draft: OrderCreate) -> Order:
     order = world.add_order(draft)
     db.upsert_order(order)
+    broadcast_state()
     return order
 
 
@@ -232,6 +351,7 @@ def update_order(order_id: str, patch: OrderUpdate) -> Order:
     if order is None:
         raise HTTPException(status_code=404, detail="order not found")
     db.upsert_order(order)
+    broadcast_state()
     return order
 
 
@@ -240,4 +360,5 @@ def delete_order(order_id: str) -> Response:
     if not world.delete_order(order_id):
         raise HTTPException(status_code=404, detail="order not found")
     db.delete_order(order_id)
+    broadcast_state()
     return Response(status_code=204)

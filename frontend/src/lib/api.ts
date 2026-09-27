@@ -1,8 +1,9 @@
-// Typed client for the DaakFlow backend API (Phase 4).
+// Typed client for the DaakFlow backend API.
 //
-// OPT-IN ONLY: nothing here is wired into the app by default — the live demo
-// still runs on `mock/seed.ts` + the client-side optimizer. Full cutover is
-// Phase 7. Import these helpers to load world state from the real backend.
+// As of Phase 7 this is the live command surface: the world store (useWorldStore)
+// drives all mutations through these helpers and mirrors the backend's Socket.IO
+// broadcasts (see ./socket.ts) into React state. Commands are REST; sockets are
+// broadcast-only.
 //
 // The response shapes are typed against ./types.ts, which is the authoritative
 // contract the backend mirrors (camelCase field names).
@@ -15,7 +16,9 @@ import type {
   Metrics,
   WorldEvent,
   VehicleType,
+  VehicleStatus,
   Priority,
+  EventType,
 } from "./types";
 
 // Base URL of the backend. Override with NEXT_PUBLIC_API_URL at build time.
@@ -33,6 +36,9 @@ export interface WorldSnapshot {
   simTime: number;
   trafficFactor: number;
   events: WorldEvent[];
+  // Phase 7 — simulation clock state (mirrors the backend WorldState).
+  running: boolean;
+  speed: number;
 }
 
 // CRUD payloads — mirror the store's VehicleDraft / OrderDraft.
@@ -52,6 +58,23 @@ export interface OrderDraft {
   priority: Priority;
   windowStart: number;
   windowEnd: number;
+}
+
+// Optional body for POST /events (mirrors the backend EventPayload). Every field
+// is optional: a bare event synthesises deterministic defaults; callers may pin a
+// target (orderId / vehicleId) or an order body for reproducible scenarios.
+export interface EventPayloadInput {
+  lat?: number;
+  lng?: number;
+  weight?: number;
+  priority?: Priority;
+  windowStart?: number;
+  windowEnd?: number;
+  address?: string;
+  label?: string;
+  vehicleId?: string;
+  orderId?: string;
+  factorDelta?: number;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -76,12 +99,35 @@ export const api = {
   seed: () => request<WorldSnapshot>("/seed", { method: "POST" }),
   reset: () => request<WorldSnapshot>("/reset", { method: "POST" }),
 
+  // Optimization (Phase 5 cold solve / Phase 6 warm re-solve)
+  optimize: () => request<WorldSnapshot>("/optimize", { method: "POST" }),
+  reoptimize: () => request<WorldSnapshot>("/reoptimize", { method: "POST" }),
+
+  // Disruptions (Phase 6) — apply a typed event, backend re-optimizes the tail.
+  fireEvent: (type: EventType, payload: EventPayloadInput = {}) =>
+    request<WorldEvent>("/events", {
+      method: "POST",
+      body: JSON.stringify({ type, payload }),
+    }),
+
+  // Simulation clock controls (Phase 7)
+  simPlay: () => request<WorldSnapshot>("/sim/play", { method: "POST" }),
+  simPause: () => request<WorldSnapshot>("/sim/pause", { method: "POST" }),
+  simSpeed: (speed: number) =>
+    request<WorldSnapshot>("/sim/speed", {
+      method: "POST",
+      body: JSON.stringify({ speed }),
+    }),
+
   // Vehicles
   listVehicles: () => request<Vehicle[]>("/vehicles"),
   getVehicle: (id: string) => request<Vehicle>(`/vehicles/${id}`),
   createVehicle: (draft: VehicleDraft) =>
     request<Vehicle>("/vehicles", { method: "POST", body: JSON.stringify(draft) }),
-  updateVehicle: (id: string, patch: Partial<VehicleDraft>) =>
+  updateVehicle: (
+    id: string,
+    patch: Partial<VehicleDraft> & { status?: VehicleStatus; driverAvailable?: boolean },
+  ) =>
     request<Vehicle>(`/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteVehicle: (id: string) =>
     request<void>(`/vehicles/${id}`, { method: "DELETE" }),

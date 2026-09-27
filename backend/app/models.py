@@ -205,6 +205,9 @@ class WorldSnapshot(ApiModel):
     sim_time: int
     traffic_factor: float = 1.0
     events: list[WorldEvent] = Field(default_factory=list)
+    # Phase 7 — simulation clock state (mirrors WorldState.running / .speed).
+    running: bool = False
+    speed: int = 3
 
 
 # --------------------------------------------------------------------------- #
@@ -296,4 +299,10 @@ class VehiclePosition(ApiModel):
     lat: float
     lng: float
     progress: float = 0.0
+
+
+class SpeedRequest(ApiModel):
+    """Body of ``POST /sim/speed`` — sim-minutes advanced per real tick."""
+
+    speed: int
 
