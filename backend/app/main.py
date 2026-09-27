@@ -93,9 +93,16 @@ def broadcast_state() -> None:
 
 
 def broadcast_plan_changed() -> None:
-    """Broadcast ``plan:changed`` (plan + metrics) after any re-solve."""
+    """Broadcast ``plan:changed`` (plan + metrics + baseline) after any re-solve."""
     dumped = world.snapshot().model_dump(by_alias=True)
-    _emit("plan:changed", {"plan": dumped["plan"], "metrics": dumped["metrics"]})
+    _emit(
+        "plan:changed",
+        {
+            "plan": dumped["plan"],
+            "metrics": dumped["metrics"],
+            "baseline": dumped["baseline"],
+        },
+    )
 
 
 def broadcast_event(evt: WorldEvent) -> None:

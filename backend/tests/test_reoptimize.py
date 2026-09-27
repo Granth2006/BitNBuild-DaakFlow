@@ -137,6 +137,57 @@ def test_reoptimize_infeasible_when_no_usable_vehicles(seeded_world):
     assert result.status == "infeasible"
 
 
+def test_reoptimize_empty_world_zeros_metrics(fresh_world):
+    # No servable orders -> the plan is cleared and every KPI is a hard zero
+    # (no divide-by-zero on the empty active fleet).
+    result = reoptimize(fresh_world)
+    assert result.status == "empty"
+    m = result.metrics
+    assert m.total_distance_km == 0.0
+    assert m.total_time_min == 0.0
+    assert m.utilization_pct == 0.0
+    assert m.late_deliveries == 0
+    assert m.dropped == 0
+
+
+def test_reoptimize_breakdown_without_capacity_drops_and_freezes(optimized_world):
+    # Edge case: a breakdown leaves too little capacity, so low-priority orders
+    # drop via the disjunctions while a COMPLETED order stays frozen.
+    vid, stops = _vehicle_with_stops(optimized_world)
+    done_id = stops[0].order_id
+    optimized_world.get_order(done_id).status = OrderStatus.COMPLETED.value
+
+    survivor = optimized_world.get_vehicle("v3")
+    survivor.capacity_weight = 100  # can't cover the whole remaining pool
+    for v in optimized_world.vehicles:
+        if v.id != survivor.id:
+            v.status = VehicleStatus.BROKEN.value
+            v.driver_available = False
+
+    result = reoptimize(optimized_world)
+    assert result.status == "ok"
+    assert result.dropped > 0
+    assert result.metrics.dropped == result.dropped  # no divide-by-zero, consistent
+    # The COMPLETED order is frozen: never re-added to the model or the plan.
+    planned = {s.order_id for route in optimized_world.plan.values() for s in route}
+    assert done_id not in planned
+    assert optimized_world.get_order(done_id).status == OrderStatus.COMPLETED.value
+
+
+def test_reoptimize_missed_window_drops_without_crashing(optimized_world):
+    # Edge case: an order whose window already closed (window_end < the vehicles'
+    # earliest start) can never be served -> it drops, and the solve still succeeds.
+    target = optimized_world.orders[0]
+    target.window_start = 400
+    target.window_end = 460  # before shift/sim start (480) -> unreachable in time
+
+    result = reoptimize(optimized_world)
+    assert result.status == "ok"
+    planned = {s.order_id for route in optimized_world.plan.values() for s in route}
+    assert target.id not in planned
+    assert target.status == OrderStatus.DROPPED.value
+
+
 def test_prior_positions_uses_relative_sequence(optimized_world):
     vid, stops = _vehicle_with_stops(optimized_world, minimum=2)
     # Freeze the first stop: the second stop should become relative index 0.

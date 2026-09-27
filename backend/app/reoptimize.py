@@ -36,6 +36,7 @@ from typing import Optional
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 from .distances import distances
+from .metrics import compute_metrics
 from .models import Metrics, OrderStatus, Reassignment, RouteStop, VehicleStatus
 from .optimizer import DIST_SCALE, TIME_SCALE
 from .state import WorldState
@@ -142,6 +143,9 @@ def reoptimize(world: WorldState) -> ReoptResult:
     with world._lock:
         servable = _servable_orders(world)
         vehicles = _usable_vehicles(world)
+        all_vehicles = list(world.vehicles)
+        all_orders = list(world.orders)
+        depot = world.depot
         depot_pt = world.depot.location
         traffic = world.traffic_factor
         sim_time = world.sim_time
@@ -352,9 +356,6 @@ def reoptimize(world: WorldState) -> ReoptResult:
     served_updates: list[tuple] = []  # (order, vehicle_id, seq, eta_min)
     new_vehicle: dict[str, str] = {}
     new_seq: dict[str, int] = {}
-    total_distance_m = 0
-    total_time_scaled = 0
-    assigned_weight = 0.0
 
     for vi, v in enumerate(vehicles):
         index = routing.Start(vi)
@@ -376,32 +377,14 @@ def reoptimize(world: WorldState) -> ReoptResult:
                 served_updates.append((o, v.id, seq, eta_min))
                 new_vehicle[o.id] = v.id
                 new_seq[o.id] = seq
-                assigned_weight += o.weight
                 seq += 1
-            nxt = solution.Value(routing.NextVar(index))
-            total_distance_m += routing.GetArcCostForVehicle(index, nxt, vi)
-            index = nxt
+            index = solution.Value(routing.NextVar(index))
         if stops:
             plan[v.id] = stops
-            start_t = solution.Min(time_dim.CumulVar(routing.Start(vi)))
-            end_t = solution.Min(time_dim.CumulVar(routing.End(vi)))
-            total_time_scaled += end_t - start_t
 
     # -- metrics ------------------------------------------------------------ #
     served_ids = {u[0].id for u in served_updates}
     dropped_orders = [o for o in servable if o.id not in served_ids]
-
-    total_capacity = sum(v.capacity_weight for v in vehicles)
-    utilization = (assigned_weight / total_capacity * 100.0) if total_capacity else 0.0
-
-    # Late deliveries: served orders whose ETA slips past their window end.
-    # Zero under the hard windows used here, but computed for the soft-window
-    # future (and so the metric is real, not hard-coded).
-    late = sum(
-        1
-        for o, _vid, _seq, eta in served_updates
-        if eta is not None and eta > o.window_end + 1e-6
-    )
 
     # -- diff vs the previous plan ------------------------------------------ #
     # ``reassignments`` is the frontend's "moved between vehicles" feed: only
@@ -435,13 +418,14 @@ def reoptimize(world: WorldState) -> ReoptResult:
     affected_orders = changed_orders
     affected_vehicles = sorted(touched_vehicles)
 
-    metrics = Metrics(
-        total_distance_km=round(total_distance_m / DIST_SCALE, 3),
-        total_time_min=round(total_time_scaled / TIME_SCALE, 2),
-        late_deliveries=late,
+    metrics = compute_metrics(
+        plan,
+        all_vehicles,
+        all_orders,
+        depot,
+        traffic,
         route_changes=route_changes,
-        utilization_pct=round(utilization, 1),
-        reopt_ms=round(solve_ms, 1),
+        reopt_ms=solve_ms,
         dropped=len(dropped_orders),
     )
 
@@ -463,6 +447,10 @@ def reoptimize(world: WorldState) -> ReoptResult:
             o.seq_index = None
             o.eta = None
         world.metrics = metrics
+
+    # Ensure the "no re-optimization" baseline exists even when the very first
+    # solve of the day was a re-opt (idempotent — a later solve leaves it alone).
+    world.capture_baseline_if_empty()
 
     return ReoptResult(
         status="ok",

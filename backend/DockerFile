@@ -1,0 +1,16 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install deps first for layer caching.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the application package (WORKDIR/app == the `app` package).
+COPY app ./app
+
+EXPOSE 8000
+
+# Serve the Socket.IO-wrapped ASGI app. Shell form so $PORT (if the platform
+# injects one) is expanded; falls back to 8000 for a plain container/VM.
+CMD ["sh", "-c", "uvicorn app.main:asgi --host 0.0.0.0 --port ${PORT:-8000}"]

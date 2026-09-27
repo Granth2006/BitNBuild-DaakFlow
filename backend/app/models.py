@@ -202,6 +202,10 @@ class WorldSnapshot(ApiModel):
     orders: list[Order]
     plan: dict[str, list[RouteStop]] = Field(default_factory=dict)
     metrics: Optional[Metrics] = None
+    # The static "no re-optimization" projection of the frozen 08:00 plan against
+    # the current world (metrics.project_static). None until the first plan is
+    # captured; scored by the same code as ``metrics`` for a like-for-like diff.
+    baseline: Optional[Metrics] = None
     sim_time: int
     traffic_factor: float = 1.0
     events: list[WorldEvent] = Field(default_factory=list)

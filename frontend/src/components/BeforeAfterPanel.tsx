@@ -1,7 +1,6 @@
 "use client";
 
 import { useWorldStore } from "../store/useWorldStore";
-import { projectStatic } from "../lib/optimizer";
 import { fmtTime } from "../lib/geo";
 import type { Metrics } from "../lib/types";
 
@@ -48,18 +47,16 @@ function Bar({ value, scale, kind }: { value: number; scale: number; kind: "befo
 
 export default function BeforeAfterPanel() {
   const metrics = useWorldStore((s) => s.metrics);
-  const initialPlan = useWorldStore((s) => s.initialPlan);
-  const initialVehicles = useWorldStore((s) => s.initialVehicles);
-  const vehicles = useWorldStore((s) => s.vehicles);
-  const orders = useWorldStore((s) => s.orders);
-  const trafficFactor = useWorldStore((s) => s.trafficFactor);
+  // The baseline is now computed on the backend (metrics.project_static) and
+  // scored by the same code as the live metrics, so Before/After is a true
+  // like-for-like diff instead of a separate client-side projection.
+  const baseline = useWorldStore((s) => s.baseline);
   const events = useWorldStore((s) => s.events);
 
-  if (!metrics || Object.keys(initialPlan).length === 0) {
+  if (!metrics || !baseline) {
     return <div className="p-3 text-[11px] text-faint">Initializing baseline…</div>;
   }
 
-  const baseline = projectStatic(initialPlan, initialVehicles, vehicles, orders, trafficFactor);
   const n = events.length;
   const avgReopt = n ? Math.round(events.reduce((a, e) => a + e.reoptMs, 0) / n) : 0;
 

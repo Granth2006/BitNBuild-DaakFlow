@@ -3,7 +3,7 @@
 import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Fragment, useEffect } from "react";
+import { Fragment, memo, useEffect, useMemo } from "react";
 import { useWorldStore } from "../store/useWorldStore";
 import { PRIORITY_META, STATUS_META } from "../lib/palette";
 import type { LatLng, Order, Vehicle } from "../lib/types";
@@ -67,6 +67,9 @@ function orderIcon(o: Order, selected: boolean) {
 
 const toLL = (p: LatLng): [number, number] => [p.lat, p.lng];
 
+// Order states that drop out of a vehicle's live route.
+const TERMINAL_STATUS = new Set(["COMPLETED", "CANCELLED", "DROPPED"]);
+
 // Keeps Leaflet's canvas in sync when the surrounding layout resizes
 // (sidebar collapse, dock changes) — otherwise tiles show grey gaps.
 function ResizeSync() {
@@ -102,56 +105,38 @@ function FocusFly({ focusVehicleId }: { focusVehicleId: string | null }) {
   return null;
 }
 
-export default function MapView() {
+// The depot never moves — its own component so a vehicle:move tick can't
+// re-render it.
+const DepotLayer = memo(function DepotLayer() {
   const depot = useWorldStore((s) => s.depot);
-  const vehicles = useWorldStore((s) => s.vehicles);
+  return (
+    <Marker position={toLL(depot.location)} icon={depotIcon()}>
+      <Tooltip direction="top">{depot.name}</Tooltip>
+    </Marker>
+  );
+});
+
+// Order markers subscribe ONLY to slices that change on user action or a
+// re-solve (orders / selection / focus / plan) — never to `vehicles`. The store
+// keeps the `orders` array reference stable on ticks with no completion, so the
+// 15 order markers no longer rebuild ~2x/sec while the sim runs. The markers are
+// memoized so a focus/selection change is the only thing that recomputes them.
+const OrderMarkers = memo(function OrderMarkers() {
   const orders = useWorldStore((s) => s.orders);
   const plan = useWorldStore((s) => s.plan);
-  const select = useWorldStore((s) => s.select);
   const selectedId = useWorldStore((s) => s.selectedId);
   const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
+  const select = useWorldStore((s) => s.select);
 
-  const byId: Record<string, Order> = {};
-  for (const o of orders) byId[o.id] = o;
+  const focusedOrderIds = useMemo(() => {
+    const set = new Set<string>();
+    if (focusVehicleId) for (const st of plan[focusVehicleId] || []) set.add(st.orderId);
+    return set;
+  }, [focusVehicleId, plan]);
 
-  // When a driver is focused, only that vehicle's stops stay fully lit; every
-  // other order marker dims so the single route reads clearly.
-  const focusedOrderIds = new Set<string>();
-  if (focusVehicleId) {
-    for (const st of plan[focusVehicleId] || []) focusedOrderIds.add(st.orderId);
-  }
-
-  return (
-    <MapContainer center={CENTER} zoom={12} className="h-full w-full" zoomControl={true}>
-      <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
-      <ResizeSync />
-      <FocusFly focusVehicleId={focusVehicleId} />
-
-      {vehicles.map((v) => {
-        if (focusVehicleId && v.id !== focusVehicleId) return null;
-        const stops = (plan[v.id] || [])
-          .map((st) => byId[st.orderId])
-          .filter((o) => o && o.status !== "COMPLETED" && o.status !== "CANCELLED" && o.status !== "DROPPED");
-        if (!stops.length) return null;
-        const path: [number, number][] = [toLL(v.location), ...stops.map((o) => toLL(o.location))];
-        const dashed = v.status === "BROKEN";
-        return (
-          <Fragment key={`route-${v.id}`}>
-            {/* white casing underneath for contrast on the light basemap */}
-            <Polyline positions={path} pathOptions={{ color: "#ffffff", weight: 6, opacity: 0.9 }} />
-            <Polyline
-              positions={path}
-              pathOptions={{ color: v.color, weight: 3.5, opacity: 0.95, dashArray: dashed ? "5 8" : undefined }}
-            />
-          </Fragment>
-        );
-      })}
-
-      <Marker position={toLL(depot.location)} icon={depotIcon()}>
-        <Tooltip direction="top">{depot.name}</Tooltip>
-      </Marker>
-
-      {orders.map((o) => (
+  const markers = useMemo(
+    () =>
+      orders.map((o) => (
         <Marker
           key={o.id}
           position={toLL(o.location)}
@@ -166,8 +151,62 @@ export default function MapView() {
             {o.eta != null && <> · ETA {fmtTime(o.eta)}</>}
           </Tooltip>
         </Marker>
-      ))}
+      )),
+    [orders, selectedId, focusVehicleId, focusedOrderIds, select],
+  );
 
+  return <>{markers}</>;
+});
+
+// Route polylines follow the fleet, so they legitimately re-render each tick —
+// but that is only ~4 vehicles, not the whole marker tree. Split from the order
+// layer so the two don't share a render.
+const VehicleRoutes = memo(function VehicleRoutes() {
+  const vehicles = useWorldStore((s) => s.vehicles);
+  const orders = useWorldStore((s) => s.orders);
+  const plan = useWorldStore((s) => s.plan);
+  const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
+
+  const byId = useMemo(() => {
+    const m: Record<string, Order> = {};
+    for (const o of orders) m[o.id] = o;
+    return m;
+  }, [orders]);
+
+  return (
+    <>
+      {vehicles.map((v) => {
+        if (focusVehicleId && v.id !== focusVehicleId) return null;
+        const stops = (plan[v.id] || [])
+          .map((st) => byId[st.orderId])
+          .filter((o) => o && !TERMINAL_STATUS.has(o.status));
+        if (!stops.length) return null;
+        const path: [number, number][] = [toLL(v.location), ...stops.map((o) => toLL(o.location))];
+        const dashed = v.status === "BROKEN";
+        return (
+          <Fragment key={`route-${v.id}`}>
+            {/* white casing underneath for contrast on the light basemap */}
+            <Polyline positions={path} pathOptions={{ color: "#ffffff", weight: 6, opacity: 0.9 }} />
+            <Polyline
+              positions={path}
+              pathOptions={{ color: v.color, weight: 3.5, opacity: 0.95, dashArray: dashed ? "5 8" : undefined }}
+            />
+          </Fragment>
+        );
+      })}
+    </>
+  );
+});
+
+// Vehicle markers move each tick (the intended animation). Rendered last so the
+// stacking order matches the original layering (routes < depot < orders <
+// vehicles).
+const VehicleMarkers = memo(function VehicleMarkers() {
+  const vehicles = useWorldStore((s) => s.vehicles);
+  const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
+
+  return (
+    <>
       {vehicles.map((v) => {
         if (focusVehicleId && v.id !== focusVehicleId) return null;
         return (
@@ -181,6 +220,26 @@ export default function MapView() {
           </Marker>
         );
       })}
+    </>
+  );
+});
+
+export default function MapView() {
+  // The shell subscribes only to `focusVehicleId` (for FocusFly), so a
+  // vehicle:move tick re-renders just the layers that actually changed, not the
+  // whole map. Each layer owns its own narrow store subscription below.
+  const focusVehicleId = useWorldStore((s) => s.focusVehicleId);
+
+  return (
+    <MapContainer center={CENTER} zoom={12} className="h-full w-full" zoomControl={true}>
+      <TileLayer url={TILE_URL} attribution={TILE_ATTRIBUTION} />
+      <ResizeSync />
+      <FocusFly focusVehicleId={focusVehicleId} />
+
+      <VehicleRoutes />
+      <DepotLayer />
+      <OrderMarkers />
+      <VehicleMarkers />
     </MapContainer>
   );
 }

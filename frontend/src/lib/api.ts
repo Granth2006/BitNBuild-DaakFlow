@@ -33,6 +33,9 @@ export interface WorldSnapshot {
   orders: Order[];
   plan: Plan;
   metrics: Metrics | null;
+  // Static "no re-optimization" projection of the frozen 08:00 plan, scored by
+  // the same backend code as `metrics` (null until the first plan is captured).
+  baseline: Metrics | null;
   simTime: number;
   trafficFactor: number;
   events: WorldEvent[];

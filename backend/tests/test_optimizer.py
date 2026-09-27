@@ -40,7 +40,10 @@ def test_optimize_metrics_are_populated(seeded_world):
     result = optimize(seeded_world)
     m = result.metrics
     assert m.total_distance_km > 0
-    assert m.total_time_min > 0
+    # total_time_min is now the plan makespan in absolute minutes-from-midnight,
+    # so it lands inside the working day (08:00=480 .. 18:00=1080), never a small
+    # per-vehicle duration. This is the Phase 8 makespan semantics.
+    assert 480 <= m.total_time_min <= 1080
     assert 0 <= m.utilization_pct <= 100
     assert m.reopt_ms >= 0
     assert m.route_changes == 0  # initial solve has nothing to diff against

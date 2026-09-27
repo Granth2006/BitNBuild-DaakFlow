@@ -57,6 +57,9 @@ interface WorldState {
   orders: Order[];
   plan: Plan;
   metrics: Metrics | null;
+  // Backend-computed "no re-optimization" projection (metrics.project_static),
+  // scored by the same code as `metrics`. Null until the first plan is captured.
+  baseline: Metrics | null;
 
   // Snapshot of the initial 08:00 world — the "no re-optimization" baseline
   // that projectStatic() replays for the before/after comparison. Captured once
@@ -126,6 +129,7 @@ export const useWorldStore = create<WorldState>((set, get) => {
         orders: snap.orders,
         plan: incomingPlan,
         metrics: snap.metrics ?? null,
+        baseline: snap.baseline ?? null,
         simTime: snap.simTime,
         trafficFactor: snap.trafficFactor,
         running: snap.running,
@@ -176,8 +180,8 @@ export const useWorldStore = create<WorldState>((set, get) => {
       });
     });
 
-    socket.on("plan:changed", (data: { plan: Plan; metrics: Metrics | null }) => {
-      set({ plan: data.plan ?? {}, metrics: data.metrics ?? null });
+    socket.on("plan:changed", (data: { plan: Plan; metrics: Metrics | null; baseline?: Metrics | null }) => {
+      set({ plan: data.plan ?? {}, metrics: data.metrics ?? null, baseline: data.baseline ?? null });
     });
 
     socket.on("event:applied", (evt: WorldEvent) => {
@@ -208,6 +212,7 @@ export const useWorldStore = create<WorldState>((set, get) => {
     orders: [],
     plan: {},
     metrics: null,
+    baseline: null,
     initialPlan: {},
     initialVehicles: [],
     simTime: DAY_START,

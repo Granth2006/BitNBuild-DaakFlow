@@ -134,6 +134,12 @@ class WorldState:
         self.orders: list[Order] = []
         self.plan: dict[str, list[RouteStop]] = {}
         self.metrics: Optional[Metrics] = None
+        # The frozen 08:00 "no re-optimization" baseline: the first non-empty
+        # plan of the day and the fleet as it stood then. project_static() replays
+        # this against the live world for the Before/After comparison. Captured
+        # once (see capture_baseline_if_empty) and cleared only on seed/reload.
+        self.initial_plan: dict[str, list[RouteStop]] = {}
+        self.initial_vehicles: list[Vehicle] = []
         self.sim_time: int = DAY_START
         self.traffic_factor: float = 1.0
         self.events: list[WorldEvent] = []
@@ -152,6 +158,8 @@ class WorldState:
             self.orders = build_seed_orders()
             self.plan = {}
             self.metrics = None
+            self.initial_plan = {}
+            self.initial_vehicles = []
             self.sim_time = DAY_START
             self.traffic_factor = 1.0
             self.events = []
@@ -173,6 +181,8 @@ class WorldState:
             self.orders = list(orders)
             self.plan = {}
             self.metrics = None
+            self.initial_plan = {}
+            self.initial_vehicles = []
             self.sim_time = DAY_START
             self.traffic_factor = 1.0
             self.events = []
@@ -184,18 +194,50 @@ class WorldState:
 
     def snapshot(self) -> WorldSnapshot:
         with self._lock:
+            baseline: Optional[Metrics] = None
+            if self.initial_plan:
+                # Local import keeps this module free of an app.metrics import
+                # cycle (metrics imports models/distances only, never state).
+                from .metrics import project_static
+
+                baseline = project_static(
+                    self.initial_plan,
+                    self.initial_vehicles,
+                    self.vehicles,
+                    self.orders,
+                    self.depot,
+                    self.traffic_factor,
+                )
             return WorldSnapshot(
                 depot=self.depot,
                 vehicles=list(self.vehicles),
                 orders=list(self.orders),
                 plan=dict(self.plan),
                 metrics=self.metrics,
+                baseline=baseline,
                 sim_time=self.sim_time,
                 traffic_factor=self.traffic_factor,
                 events=list(self.events),
                 running=self.running,
                 speed=self.speed,
             )
+
+    def capture_baseline_if_empty(self) -> None:
+        """Freeze the first non-empty plan of the day as the static baseline.
+
+        Idempotent: once ``initial_plan`` is set it is never overwritten, so the
+        08:00 "no re-optimization" projection always replays the very first plan
+        no matter how many re-optimizations follow. Deep-copies both the plan and
+        the fleet so later live mutations never alias the frozen snapshot.
+        """
+        with self._lock:
+            if self.initial_plan or not self.plan:
+                return
+            self.initial_plan = {
+                vid: [s.model_copy(deep=True) for s in stops]
+                for vid, stops in self.plan.items()
+            }
+            self.initial_vehicles = [v.model_copy(deep=True) for v in self.vehicles]
 
     # -- vehicle CRUD ------------------------------------------------------- #
     def list_vehicles(self) -> list[Vehicle]:

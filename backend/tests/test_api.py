@@ -24,6 +24,8 @@ def test_get_state_is_camelcase_and_seeded(client):
     assert body["simTime"] == 480
     assert body["trafficFactor"] == 1.0
     assert "plan" in body and "events" in body
+    # The static baseline is exposed but null until the first plan is captured.
+    assert "baseline" in body and body["baseline"] is None
     # vehicle objects use the camelCase wire contract
     v = body["vehicles"][0]
     for key in ("capacityWeight", "capacityVolume", "speedKmh", "driverAvailable", "shiftStart"):
@@ -160,6 +162,31 @@ def test_reoptimize_endpoint(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["metrics"]["reoptMs"] < 5000
+
+
+def test_state_exposes_baseline_after_optimize(client):
+    # Null before the first solve; the frozen 08:00 baseline appears after it.
+    assert client.get("/state").json()["baseline"] is None
+    client.post("/optimize")
+    baseline = client.get("/state").json()["baseline"]
+    assert baseline is not None
+    # Full camelCase Metrics shape (scored by the same code as live metrics).
+    for key in (
+        "totalDistanceKm",
+        "totalTimeMin",
+        "lateDeliveries",
+        "routeChanges",
+        "utilizationPct",
+        "reoptMs",
+        "dropped",
+    ):
+        assert key in baseline
+    # A real projection, not zeros: distance covered and makespan inside the day.
+    assert baseline["totalDistanceKm"] > 0
+    assert 480 <= baseline["totalTimeMin"] <= 1080
+    # The static projection never re-optimizes, so these are fixed at zero.
+    assert baseline["routeChanges"] == 0
+    assert baseline["reoptMs"] == 0.0
 
 
 def test_events_endpoint_traffic(client):

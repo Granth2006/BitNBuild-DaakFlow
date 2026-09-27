@@ -37,6 +37,7 @@ from typing import Optional
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
 from .distances import distances
+from .metrics import compute_metrics
 from .models import Metrics, OrderStatus, RouteStop, VehicleStatus
 from .state import WorldState
 
@@ -108,6 +109,9 @@ def optimize(world: WorldState) -> OptimizeResult:
     with world._lock:
         active = _active_orders(world)
         vehicles = _usable_vehicles(world)
+        all_vehicles = list(world.vehicles)
+        all_orders = list(world.orders)
+        depot = world.depot
         depot_pt = world.depot.location
         traffic = world.traffic_factor
         sim_time = world.sim_time
@@ -241,9 +245,6 @@ def optimize(world: WorldState) -> OptimizeResult:
     # -- extract routes ----------------------------------------------------- #
     plan: dict[str, list[RouteStop]] = {}
     served_updates: list[tuple] = []  # (order, vehicle_id, seq, eta_min)
-    total_distance_m = 0
-    total_time_scaled = 0
-    assigned_weight = 0.0
 
     for vi, v in enumerate(vehicles):
         index = routing.Start(vi)
@@ -258,31 +259,26 @@ def optimize(world: WorldState) -> OptimizeResult:
                     RouteStop(order_id=order.id, seq=seq, eta=eta_min, locked=False)
                 )
                 served_updates.append((order, v.id, seq, eta_min))
-                assigned_weight += order.weight
                 seq += 1
-            nxt = solution.Value(routing.NextVar(index))
-            total_distance_m += routing.GetArcCostForVehicle(index, nxt, vi)
-            index = nxt
+            index = solution.Value(routing.NextVar(index))
         if stops:
             plan[v.id] = stops
-            start_t = solution.Min(time_dim.CumulVar(routing.Start(vi)))
-            end_t = solution.Min(time_dim.CumulVar(routing.End(vi)))
-            total_time_scaled += end_t - start_t
 
     # -- metrics ------------------------------------------------------------ #
     served_ids = {upd[0].id for upd in served_updates}
     dropped_orders = [o for o in active if o.id not in served_ids]
 
-    total_capacity = sum(v.capacity_weight for v in vehicles)
-    utilization = (assigned_weight / total_capacity * 100.0) if total_capacity else 0.0
-
-    metrics = Metrics(
-        total_distance_km=round(total_distance_m / DIST_SCALE, 3),
-        total_time_min=round(total_time_scaled / TIME_SCALE, 2),
-        late_deliveries=0,  # initial solve: no prior plan to diff against
-        route_changes=0,  # initial solve: nothing to compare against
-        utilization_pct=round(utilization, 1),
-        reopt_ms=round(solve_ms, 1),
+    # Single source of truth (see app.metrics): distance from each vehicle's live
+    # position, makespan as the latest absolute-minute ETA, utilization over the
+    # active fleet. The initial solve has no prior plan to diff -> route_changes 0.
+    metrics = compute_metrics(
+        plan,
+        all_vehicles,
+        all_orders,
+        depot,
+        traffic,
+        route_changes=0,
+        reopt_ms=solve_ms,
         dropped=len(dropped_orders),
     )
 
@@ -300,6 +296,10 @@ def optimize(world: WorldState) -> OptimizeResult:
             order.seq_index = None
             order.eta = None
         world.metrics = metrics
+
+    # Freeze this as the 08:00 "no re-optimization" baseline the first time a
+    # non-empty plan exists (idempotent — later re-solves leave it untouched).
+    world.capture_baseline_if_empty()
 
     return OptimizeResult(
         status="ok",

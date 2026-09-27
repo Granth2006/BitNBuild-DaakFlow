@@ -22,7 +22,11 @@ let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (socket) return socket;
   socket = io(API_BASE, {
-    transports: ["websocket", "polling"],
+    // Force a pure WebSocket connection so we never spend the first frames on
+    // HTTP long-polling (which adds request/round-trip latency before the
+    // transport upgrades). The backend Socket.IO server speaks WebSocket, so
+    // there is no need for the polling fallback on localhost/dev.
+    transports: ["websocket"],
     autoConnect: true,
   });
   return socket;
